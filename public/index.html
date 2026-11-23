@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Signifi Rotary XL</title>
+  <link rel="icon" href="signifi-logo.svg">
+  <link rel="stylesheet" href="fonts/fonts.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ============================== DASHBOARD ============================== -->
+<section id="view-dashboard" class="view active">
+  <header class="topbar">
+    <img class="logo" src="signifi-logo.svg" alt="Signifi">
+    <div class="topbar-right">
+      <span class="machine-pill" id="machine-pill"><span class="dot"></span><span id="machine-text">Starting…</span></span>
+      <span class="clock" id="clock"></span>
+    </div>
+  </header>
+
+  <div class="dash-main">
+    <div class="hero-copy">
+      <p class="eyebrow">Rotary XL · Smart Locker</p>
+      <h1>Your gear,<br><span class="red">ready when you are.</span></h1>
+      <p class="sub">Choose your items, check out, and the Rotary XL brings them to the door, which opens on its own.</p>
+      <button class="btn-order" id="btn-order">
+        Order now
+        <svg viewBox="0 0 24 24" width="26" height="26"><path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="hero-stats">
+        <div><b id="stat-products">0</b><span>products</span></div>
+        <div><b>12</b><span>columns</span></div>
+        <div><b>24/7</b><span>pickup</span></div>
+      </div>
+    </div>
+
+    <div class="rotary-wrap" id="dash-rotary-wrap">
+      <div class="rotary-scene" id="dash-rotary"></div>
+      <div class="rotary-base"></div>
+    </div>
+  </div>
+
+  <button class="gear" id="btn-gear" aria-label="Admin">
+    <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M19.4 13a7.7 7.7 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.6 7.6 0 0 0-1.7-1L15 3.3h-4l-.4 2.6a7.6 7.6 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.7 7.7 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.6 7.6 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z" transform="translate(-1 0)"/></svg>
+  </button>
+</section>
+
+<!-- ============================== CATALOG ============================== -->
+<section id="view-catalog" class="view">
+  <header class="topbar">
+    <button class="btn-ghost" id="btn-cat-back">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Back
+    </button>
+    <h2 class="page-title">Choose your items</h2>
+    <div class="search">
+      <svg viewBox="0 0 24 24" width="20" height="20"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <input id="search" type="search" placeholder="Search products" autocomplete="off">
+    </div>
+    <img class="logo small" src="signifi-logo.svg" alt="Signifi">
+  </header>
+
+  <nav class="cat-chips" id="cat-chips"></nav>
+
+  <div class="cat-body">
+    <div class="grid" id="product-grid"></div>
+
+    <aside class="cart" id="cart">
+      <div class="cart-head">
+        <h3>Your cart</h3>
+        <span class="pill" id="cart-count">0</span>
+      </div>
+      <div class="cart-items" id="cart-items"></div>
+      <div class="cart-foot">
+        <div class="row"><span>Total</span><strong id="cart-total">$0.00</strong></div>
+        <button class="btn-checkout" id="btn-checkout" disabled>Checkout</button>
+        <button class="btn-link" id="btn-clear-cart">Clear cart</button>
+      </div>
+    </aside>
+  </div>
+
+  <button class="cart-bar" id="cart-bar"><span id="cart-bar-text">0 items</span><strong id="cart-bar-total">$0.00</strong></button>
+</section>
+
+<!-- ============================== VENDING ============================== -->
+<section id="view-vend" class="view">
+  <header class="topbar">
+    <img class="logo" src="signifi-logo.svg" alt="Signifi">
+  </header>
+  <div class="vend-main">
+    <div class="rotary-wrap vend-rotary">
+      <div class="rotary-scene" id="vend-rotary"></div>
+      <div class="rotary-base"></div>
+      <div class="door-frame" id="door-frame"><span>DOOR</span></div>
+    </div>
+    <div class="vend-card">
+      <div class="vend-status" id="vend-status"><span class="spinner"></span></div>
+      <h2 id="vend-title">Preparing your order…</h2>
+      <p class="vend-sub" id="vend-sub">Please wait</p>
+      <ol class="vend-steps" id="vend-steps"></ol>
+      <button class="btn-order small hidden" id="btn-vend-done">Back to home</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== ADMIN ============================== -->
+<section id="view-admin" class="view">
+  <header class="topbar admin-top">
+    <img class="logo small" src="signifi-logo.svg" alt="Signifi">
+    <span class="admin-badge">Admin</span>
+    <nav class="tabs" id="admin-tabs">
+      <button data-tab="products" class="active">Products</button>
+      <button data-tab="connection">Connection</button>
+      <button data-tab="columns">Alfie doors</button>
+      <button data-tab="test">Test &amp; Log</button>
+    </nav>
+    <button class="btn-exit" id="btn-admin-exit">Exit admin</button>
+  </header>
+
+  <div class="admin-body">
+    <!-- products -->
+    <div class="tab-pane active" data-pane="products">
+      <div class="pane-head">
+        <div>
+          <h3>Products</h3>
+          <p class="muted">Location = rotary column (Arduino C1–C12) + Alfie door + latch. Shelf = row 1–10 on the Rotary XL display.</p>
+        </div>
+        <button class="btn-primary" id="btn-add-product">+ Add product</button>
+      </div>
+      <div class="table-wrap">
+        <table class="tbl">
+          <thead><tr><th></th><th>Product</th><th>Price</th><th>Rotary column</th><th>Shelf</th><th>Alfie door</th><th>Latch</th><th>Status</th><th></th></tr></thead>
+          <tbody id="product-rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- connection -->
+    <div class="tab-pane" data-pane="connection">
+      <div class="pane-head">
+        <div>
+          <h3>Connection</h3>
+          <p class="muted">Serial port, baud rate and line ending for each device. Settings are saved and the ports reopen automatically when the app starts.</p>
+        </div>
+        <label class="switch-row">
+          <span>Simulation mode</span>
+          <input type="checkbox" id="sim-toggle"><span class="switch"></span>
+        </label>
+      </div>
+      <div class="sim-banner" id="sim-banner">Simulation mode is ON: nothing is sent to the serial ports. The server answers like the rotary and the Alfies so the full checkout can be tested.</div>
+
+      <div class="cards2">
+        <div class="card">
+          <div class="card-title"><span class="status-dot" id="dot-rotary"></span>Rotary (Arduino Mega · NEMA34)<span class="state-tag" id="rotary-state"></span></div>
+          <label>Serial port (COM / /dev/tty)
+            <div class="inline"><select id="rotary-port"></select><button class="btn-icon" data-refresh title="Refresh ports">↻</button></div>
+          </label>
+          <div class="two">
+            <label>Baud rate <select id="rotary-baud"></select></label>
+            <label>Line ending <select id="rotary-le"></select></label>
+          </div>
+          <div class="two">
+            <label>Move timeout (seconds) <input type="number" id="rotary-timeout" min="10" max="600"></label>
+            <label>Settle time before door opens (ms) <input type="number" id="rotary-settle" min="0" max="10000" step="100"></label>
+          </div>
+          <div class="two">
+            <label>Home command <input id="rotary-home-cmd" maxlength="20"></label>
+            <label class="switch-row tight"><input type="checkbox" id="rotary-home-on-connect"><span class="switch"></span><span>Home on connect</span></label>
+          </div>
+          <p class="hint">Firmware default: 9600 baud, Newline (LF). On connect the app waits for the Mega to start, sends the home command and waits for "HOME COMPLETE". Customers can only order after that.</p>
+          <div class="btn-row"><button class="btn-primary" data-open="rotary">Connect</button><button class="btn-secondary" id="btn-home-now">Home now</button><button class="btn-secondary" data-close="rotary">Disconnect</button></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title"><span class="status-dot" id="dot-alfie"></span>Alfie (USB-CAN adapter · SLCAN)</div>
+          <label>Serial port (COM / /dev/tty)
+            <div class="inline"><select id="alfie-port"></select><button class="btn-icon" data-refresh title="Refresh ports">↻</button></div>
+          </label>
+          <div class="two">
+            <label>Baud rate <select id="alfie-baud"></select></label>
+            <label>Line ending <select id="alfie-le"></select></label>
+          </div>
+          <label>Frame format
+            <select id="alfie-preset">
+              <option value="t{ID}{DLC}{DATA}">SLCAN: t01F24F05</option>
+              <option value="{ID} {DLC} {DATA_SP}">Spaced: 01F 2 4F 05</option>
+              <option value="{ID}#{DATA}">Can-utils: 01F#4F05</option>
+              <option value="custom">Custom…</option>
+            </select>
+          </label>
+          <label>Template <input id="alfie-template" placeholder="t{ID}{DLC}{DATA}"></label>
+          <p class="hint">Placeholders: {ID} 3-digit CAN ID, {DLC} data length, {DATA} hex bytes, {DATA_SP} hex bytes with spaces. Preview: <code id="alfie-preview"></code></p>
+          <label>Init commands (sent after connect, one per line)
+            <textarea id="alfie-init" rows="3" placeholder="C&#10;S2&#10;O"></textarea>
+          </label>
+          <p class="hint">C / S2 / O = close, 50 kbit/s (Alfie default), open, the same as VendingPoC.</p>
+          <div class="two">
+            <label>Open confirm timeout (s) <input type="number" id="alfie-open-timeout" min="1" max="60"></label>
+            <label>Door close timeout (s) <input type="number" id="alfie-close-timeout" min="5" max="600"></label>
+          </div>
+          <div class="btn-row"><button class="btn-primary" data-open="alfie">Connect</button><button class="btn-secondary" data-close="alfie">Disconnect</button></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Kiosk</div>
+        <div class="three">
+          <label>Currency symbol <input id="set-currency" maxlength="3"></label>
+          <label>Idle return to dashboard (s) <input type="number" id="set-idle" min="20" max="900"></label>
+          <label>New admin password <input id="set-password" inputmode="numeric" placeholder="leave blank to keep" maxlength="8"></label>
+        </div>
+        <label class="switch-row"><input type="checkbox" id="set-soldout"><span class="switch"></span><span>Mark a product "Sold out" after it is dispensed (restock it from Products)</span></label>
+      </div>
+      <div class="save-bar"><button class="btn-primary" id="btn-save-conn">Save settings</button></div>
+    </div>
+
+    <!-- alfie doors -->
+    <div class="tab-pane" data-pane="columns">
+      <div class="pane-head">
+        <div>
+          <h3>Alfie doors</h3>
+          <p class="muted">The Rotary XL has 3 doors, each with its own Alfie controller. Set each Alfie's address to match its Group ID and DIP switches. CAN ID = Group ID · Local address · 0xF.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="tbl">
+          <thead><tr><th>Alfie</th><th>Name</th><th>Group ID (0-3)</th><th>Local address / DIP (0-15)</th><th>CAN ID</th><th></th></tr></thead>
+          <tbody id="column-rows"></tbody>
+        </table>
+      </div>
+      <div class="save-bar"><button class="btn-primary" id="btn-save-cols">Save Alfie doors</button></div>
+    </div>
+
+    <!-- test -->
+    <div class="tab-pane" data-pane="test">
+      <div class="cards2">
+        <div class="card">
+          <div class="card-title">Rotary</div>
+          <div class="chip-grid" id="test-cols"></div>
+          <div class="inline mt"><input id="rotary-raw" placeholder="Raw command, e.g. C3"><button class="btn-secondary" id="btn-rotary-raw">Send</button></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Alfie latch</div>
+          <div class="two">
+            <label>Alfie door <select id="test-latch-col"></select></label>
+            <label>Latch <select id="test-latch-num"></select></label>
+          </div>
+          <div class="btn-row"><button class="btn-primary" id="btn-test-open">Open latch</button><button class="btn-secondary" id="btn-test-query">Query status</button></div>
+          <div class="inline mt"><input id="alfie-raw" placeholder="Raw line, e.g. t01F24F05"><button class="btn-secondary" id="btn-alfie-raw">Send</button></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Serial log <button class="btn-link right" id="btn-clear-log">Clear</button></div>
+        <pre class="log" id="log"></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== NUMPAD ============================== -->
+<div class="modal" id="numpad-modal">
+  <div class="numpad">
+    <button class="np-close" data-np-close aria-label="Close">✕</button>
+    <div class="np-lock">
+      <svg viewBox="0 0 24 24" width="26" height="26"><rect x="5" y="10" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+    </div>
+    <h3>Enter admin password</h3>
+    <div class="np-dots" id="np-dots"></div>
+    <div class="np-keys" id="np-keys"></div>
+  </div>
+</div>
+
+<!-- ============================== PRODUCT EDITOR ============================== -->
+<div class="modal" id="product-modal">
+  <form class="editor" id="product-form" autocomplete="off">
+    <h3 id="editor-title">New product</h3>
+    <div class="editor-body">
+      <div class="editor-preview"><div class="thumb big" id="editor-thumb"></div></div>
+      <div class="editor-fields">
+        <label>Product name <input name="name" required maxlength="80" placeholder="e.g. Wireless Mouse"></label>
+        <label>Image link <input name="image" placeholder="https://…/image.png  or  img/products/mouse-black.svg"></label>
+        <label>Price <input name="price" type="number" min="0" step="0.01" required placeholder="0.00"></label>
+        <fieldset class="loc">
+          <legend>Location</legend>
+          <label>Rotary column (Arduino) <select name="column"></select></label>
+          <label>Shelf in column <select name="slot"></select></label>
+          <label>Alfie door <select name="alfie"></select></label>
+          <label>Latch <select name="compartment"></select></label>
+        </fieldset>
+        <p class="hint">At checkout the carousel turns this column to the door, stops, and then this Alfie opens the latch.</p>
+        <p class="warn hidden" id="editor-warn"></p>
+        <label class="check"><input type="checkbox" name="available"> In stock (shown to customers)</label>
+      </div>
+    </div>
+    <div class="editor-foot">
+      <button type="button" class="btn-danger hidden" id="btn-delete-product">Delete</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn-secondary" id="btn-cancel-product">Cancel</button>
+      <button type="submit" class="btn-primary">Save product</button>
+    </div>
+  </form>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

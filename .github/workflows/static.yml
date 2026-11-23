@@ -33,11 +33,14 @@ jobs:
         uses: actions/checkout@v4
       - name: Setup Pages
         uses: actions/configure-pages@v5
+      - name: Add the installer to the site
+        # served as https://kspatel45.github.io/rotary-xl-kiosk/install.sh (the QR code runs this)
+        run: cp install.sh site/install.sh
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Upload entire repository
-          path: '.'
+          # Only the install page (site/), not the whole repository
+          path: './site'
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5

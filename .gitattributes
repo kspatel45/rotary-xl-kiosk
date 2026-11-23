@@ -1,0 +1,8 @@
+# shell scripts and the Linux bridge must keep LF line endings or bash fails on Linux
+*.sh text eol=lf
+linux/* text eol=lf
+serial-bridge-linux.js text eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.woff2 binary
+*.png binary

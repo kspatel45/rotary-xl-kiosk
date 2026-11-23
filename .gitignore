@@ -1,0 +1,8 @@
+# local data: settings, products, admin password, backups
+data/
+# browser profile used by start-kiosk.bat
+.kiosk-profile/
+# Claude preview config
+.claude/
+node_modules/
+*.log

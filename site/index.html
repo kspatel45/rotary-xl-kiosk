@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Install Rotary XL Kiosk</title>
+  <meta name="description" content="One-line installer for the Signifi Rotary XL kiosk on Linux.">
+  <link rel="icon" href="signifi-logo.svg">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Raleway:wght@400;500;600;700&display=swap">
+  <style>
+    :root { --red: #e32d49; --slate: #243037; --grey: #d3ddde; --bg: #f5f7f7; --muted: #5d6f78; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--slate); font: 17px/1.55 Raleway, "Segoe UI", system-ui, sans-serif; }
+    header { background: #fff; border-bottom: 1px solid var(--grey); padding: 18px 24px; position: relative; }
+    header::after { content: ""; position: absolute; left: 0; bottom: -1px; width: 120px; height: 3px; background: var(--red); }
+    header img { height: 44px; display: block; }
+    main { max-width: 980px; margin: 0 auto; padding: 32px 16px 60px; }
+    h1, h2 { font-family: "Barlow Condensed", "Arial Narrow", sans-serif; text-transform: uppercase; letter-spacing: .5px; margin: 0; }
+    h1 { font-size: clamp(36px, 7vw, 58px); line-height: 1; }
+    h1 span { color: var(--red); }
+    .lead { color: var(--muted); font-size: 19px; max-width: 680px; margin: 12px 0 28px; }
+    .card { background: #fff; border: 1px solid var(--grey); border-radius: 14px; padding: 22px; margin-bottom: 18px; }
+    h2 { font-size: 26px; margin-bottom: 10px; }
+    .cmd { display: flex; gap: 10px; align-items: stretch; flex-wrap: wrap; }
+    code.big { flex: 1 1 420px; min-width: 0; display: block; background: var(--slate); color: #fff; border-radius: 10px; padding: 16px 18px; font: 15px/1.4 Consolas, "DejaVu Sans Mono", monospace; overflow-x: auto; white-space: nowrap; }
+    button { font: inherit; font-weight: 700; border: 0; border-radius: 10px; padding: 0 22px; min-height: 50px; background: var(--red); color: #fff; cursor: pointer; }
+    button:active { transform: scale(.97); }
+    .qrs { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
+    .qr { text-align: center; }
+    .qr img { width: 100%; max-width: 280px; border: 1px solid var(--grey); border-radius: 12px; background: #fff; }
+    .qr h3 { margin: 10px 0 4px; font-size: 18px; }
+    .qr p { margin: 0; color: var(--muted); font-size: 15px; }
+    ol { padding-left: 22px; margin: 0; }
+    li { margin-bottom: 8px; }
+    kbd { background: #eef2f3; border: 1px solid var(--grey); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; font: 14px Consolas, monospace; }
+    .muted { color: var(--muted); font-size: 15px; }
+    a { color: var(--red); }
+    @media print { header, button, .noprint { display: none; } body { background: #fff; } .card { break-inside: avoid; } }
+  </style>
+</head>
+<body>
+<header><img src="signifi-logo.svg" alt="Signifi"></header>
+<main>
+  <h1>Rotary XL <span>Kiosk</span></h1>
+  <p class="lead">Installs the Rotary XL touch kiosk on a Linux PC and opens it full screen. It starts on its own after every reboot.</p>
+
+  <div class="card">
+    <h2>1 · Run this in a terminal</h2>
+    <p class="muted">Open a terminal with <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd>, paste the line below, press <kbd>Enter</kbd> and type your password when asked.</p>
+    <div class="cmd">
+      <code class="big" id="cmd">curl -fsSL https://kspatel45.github.io/rotary-xl-kiosk/install.sh | bash</code>
+      <button id="copy" class="noprint">Copy</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>2 · Or scan a QR code</h2>
+    <div class="qrs">
+      <div class="qr">
+        <img src="qr-install-command.svg" alt="QR code with the install command">
+        <h3>USB barcode scanner</h3>
+        <p>Open a terminal, click in it, and scan. The scanner types the install command. Press <kbd>Enter</kbd> if your scanner doesn't add it.</p>
+      </div>
+      <div class="qr">
+        <img src="qr-install-page.svg" alt="QR code linking to this page">
+        <h3>Phone</h3>
+        <p>Opens this page, so you can read or send the command to the PC.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>What the installer does</h2>
+    <ol>
+      <li>Downloads the kiosk to <code>~/rotary-kiosk</code>. Running it again updates the kiosk and keeps your products and settings.</li>
+      <li>Installs Node.js and Chromium if they're missing.</li>
+      <li>Gives the user access to the serial ports (Arduino Mega and USB-CAN adapter).</li>
+      <li>Sets the screen to portrait. Change this in <code>~/rotary-kiosk/linux/kiosk.conf</code>.</li>
+      <li>Opens the kiosk full screen now and at every login. Press <kbd>Alt</kbd>+<kbd>F4</kbd> to exit.</li>
+    </ol>
+    <p class="muted">Works on Lubuntu 22.04 / 24.04, and on Ubuntu, Debian and Mint with an X11 desktop. After installing, open Admin with the gear at the bottom-left of the screen, choose the serial ports and change the admin password.</p>
+  </div>
+</main>
+<script>
+  document.getElementById('copy').addEventListener('click', async e => {
+    const t = document.getElementById('cmd').textContent;
+    try { await navigator.clipboard.writeText(t); e.target.textContent = 'Copied'; }
+    catch { const r = document.createRange(); r.selectNodeContents(document.getElementById('cmd')); getSelection().removeAllRanges(); getSelection().addRange(r); e.target.textContent = 'Press Ctrl+C'; }
+    setTimeout(() => { e.target.textContent = 'Copy'; }, 2000);
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+# Signifi Rotary XL Kiosk - screen settings for Lubuntu.
+# Copied to kiosk.conf by install-lubuntu.sh; edit kiosk.conf, then reboot or run start-kiosk.sh again.
+
+# Rotate the 15.6" screen to portrait: normal | left | right | inverted
+# "right" = top of the picture on the right-hand edge of the panel; try "left" if it comes out upside down.
+ROTATE=right
+
+# Display output to rotate (leave empty to use the first connected one; see the names with: xrandr)
+OUTPUT=
+
+# Port the local server listens on
+PORT=8090
+
+# Hide the mouse pointer after this many seconds without movement (0 = never hide)
+HIDE_CURSOR_SECONDS=3
