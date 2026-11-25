@@ -58,9 +58,13 @@ const DEFAULT_STORE = {
       homeCommand: 'HOME',        // NEMA34_TEST: HOME (or C1) runs homeMotor()
       bootWaitSec: 60,            // the Mega resets when the port opens and homes in setup(): wait for "System Ready."
       autoSpin: true,             // keep the carousel turning while the kiosk is idle
-      firmware: 'v05',            // 'v05' = RotaryXL_v05 (GOTO <deg>, angles from Admin > Calibration) | 'legacy' = NEMA34_TEST v04 (C1-C12)
+      firmware: 'v05',            // 'v05' = RotaryXL v05/v06 (GOTO <deg>, angles from Admin > Calibration) | 'legacy' = NEMA34_TEST v04 (C1-C12)
       columnAngles: [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330],   // degrees of C1..C12 at the door (Calibration page)
-      spinRPM: 2,                 // v05: continuous idle spin speed
+      spinRPM: 2,                 // free-run (idle spin) speed, rpm
+      moveRPM: 5,                 // GOTO / JOG speed, rpm                      (Admin > Calibration > Motion)
+      rampUpSec: 3,               // seconds from standstill to full speed
+      rampDownSec: 3,             // seconds from full speed to standstill
+      cwDir: 1,                   // v06: motor direction that turns the carousel clockwise (1 or -1)
       spinSequence: '',           // legacy only: order of the idle indexing; empty = C1,C2,...,C12
       spinPauseMs: 0              // legacy only: pause on each column during the idle indexing
     },
@@ -230,6 +234,7 @@ async function homeRotary(reason) {
     await waitLine('rotary', /Command Complete/i, 3000);                    // let the firmware finish its reply
     rotaryState.column = 1;                                                 // home = column 1
     setRotary('ready', 'Ready');
+    if (isV05()) { const want = spin.want; spin.want = false; await applyMotion('after homing'); spin.want = want; }
     if (spin.want) spinLoop();                                              // idle spin starts as soon as it is homed
   } catch (e) {
     setRotary('error', e.message);
@@ -274,6 +279,31 @@ function nearestColumn(angle) {
   }
   return best;
 }
+// v06: SPEED / RUNSPEED / RAMP / DIR, sent after every homing and when they are saved.
+// v05 answers "Invalid Command" to RUNSPEED/RAMP/DIR: logged once, the rest keeps working.
+const MOTION_KEYS = ['moveRPM', 'spinRPM', 'rampUpSec', 'rampDownSec', 'cwDir'];
+async function applyMotion(reason) {
+  if (!isV05() || !spinState()) return;
+  const r = store.settings.rotary;
+  const lines = [
+    `SPEED ${+r.moveRPM || 5}`,
+    `RUNSPEED ${+r.spinRPM || 2}`,
+    `RAMP ${+r.rampUpSec || 3} ${+r.rampDownSec || 3}`,
+    `DIR ${+r.cwDir === -1 ? -1 : 1}`
+  ];
+  const resume = spin.want;
+  await stopSpin();                                   // DIR is only accepted while stopped
+  let unsupported = false;
+  for (const l of lines) {
+    const res = await rotaryJob(() => runColumn(l)).catch(e => ({ ok: false, error: e.message }));
+    if (!res.ok && /Invalid/i.test(res.error || '')) unsupported = true;
+    else if (!res.ok) emitLine('rotary', `[motion] ${l} failed: ${res.error}`, 'sys');
+  }
+  if (unsupported) emitLine('rotary', '[motion] this firmware does not know RUNSPEED/RAMP/DIR - flash RotaryXL_v06 for one-way motion and ramps', 'sys');
+  else emitLine('rotary', `[motion] applied (${reason}): move ${r.moveRPM} rpm, free run ${r.spinRPM} rpm, ramp ${r.rampUpSec}/${r.rampDownSec} s, clockwise DIR ${r.cwDir}`, 'sys');
+  if (resume) startSpin();
+}
+
 async function moveColumn(col) {
   if (!isV05()) return runColumn('C' + col);
   const r = await runColumn('GOTO ' + columnAngle(col));
@@ -439,7 +469,7 @@ function writeLink(role, text) {
 function simSay(role, text, delay) { setTimeout(() => emitLine(role, text, 'rx'), delay); }
 
 // simulated RotaryXL_v05: a position that moves at 5 rpm (30 deg/s) for GOTO/JOG and spins at SPIN rpm
-const simR = { angle: 0, spin: null };
+const simR = { angle: 0, spin: null, moveRPM: 5, up: 3, down: 3 };
 const norm360 = a => ((a % 360) + 360) % 360;
 function simNow() {
   if (!simR.spin) return simR.angle;
@@ -451,10 +481,17 @@ function simV05(text) {
   const [cmd, ...rest] = text.trim().toUpperCase().split(/[\s,]+/);
   const nums = rest.map(Number).filter(Number.isFinite);
   const cur = simNow();
-  const travel = d => Math.abs(d) / 30 * 1000 + 350;                       // 5 rpm = 30 deg/s
-  const shortest = (from, to) => ((((to - from) % 360) + 540) % 360) - 180;
+  // travel time with the ramps (approx.), rpm * 6 = deg/s
+  const travel = d => Math.abs(d) / (simR.moveRPM * 6) * 1000 + (simR.up + simR.down) * 500 * Math.min(1, Math.abs(d) / 30) + 200;
+  const forward = (from, to) => norm360(to - from);                       // v06 only turns clockwise
+  const shortest = (from, to) => forward(from, to);
+  if (cmd === 'SPEED' || cmd === 'RUNSPEED' || cmd === 'RAMP' || cmd === 'DIR') {
+    if (cmd === 'SPEED' && nums[0]) simR.moveRPM = nums[0];
+    if (cmd === 'RAMP' && nums.length >= 2) { simR.up = nums[0]; simR.down = nums[1]; }
+    return say([`CONFIG SPEED ${simR.moveRPM}`, 'Command Complete.'], 20);
+  }
   if (cmd === 'GOTO' && nums.length) {
-    const d = shortest(cur, nums[0]); simR.spin = null; simR.angle = norm360(nums[0]);
+    const d = forward(cur, nums[0]); simR.spin = null; simR.angle = norm360(nums[0]);
     return say(['Move Complete', pos(simR.angle), 'Command Complete.'], travel(d));
   }
   if (cmd === 'JOG' && nums.length) {
@@ -467,11 +504,11 @@ function simV05(text) {
     return say(['SPINNING', pos(cur), 'Command Complete.'], 30);
   }
   if (cmd === 'STOPNEAR' && nums.length) {
-    const ahead = simR.spin ? 3 : -180;                                     // need a few degrees to decelerate
+    const ahead = simR.spin ? 3 : 0;                                        // need a few degrees to ramp down
     let best = null, bestD = 1e9;
     for (const a of nums) {
-      let d = simR.spin ? norm360(a - cur) : shortest(cur, a);
-      if (simR.spin && d < ahead) d += 360;
+      let d = forward(cur, a);
+      if (d < ahead) d += 360;
       if (Math.abs(d) < bestD) { bestD = Math.abs(d); best = a; }
     }
     const rpm = simR.spin ? simR.spin.rpm : 5;
@@ -480,7 +517,6 @@ function simV05(text) {
   }
   if (cmd === 'STOP') { simR.spin = null; simR.angle = cur; return say(['Stopped', pos(cur), 'Command Complete.'], 600); }
   if (cmd === 'POS?' || cmd === 'POS') return say([pos(cur), 'Command Complete.'], 20);
-  if (cmd === 'SPEED') return say(['SPEED ' + (nums[0] || 5), 'Command Complete.'], 20);
   return say(['Invalid Command: ' + cmd, 'Command Complete.'], 20);
 }
 
@@ -550,6 +586,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/settings' && req.method === 'PUT') {
       const b = await readBody(req);
       const wasSim = store.settings.simulation;
+      const motionBefore = JSON.stringify(MOTION_KEYS.map(k => store.settings.rotary[k]));
       const keepPw = store.settings.adminPassword;
       store.settings = deepMerge(store.settings, b);
       store.settings.adminPassword = (b.newAdminPassword && /^\d{4,8}$/.test(b.newAdminPassword)) ? b.newAdminPassword : keepPw;
@@ -564,6 +601,7 @@ const server = http.createServer(async (req, res) => {
       if (!wasSim && store.settings.simulation) { closeLink('rotary', 'simulation on'); closeLink('alfie', 'simulation on'); homeRotary('connect'); }
       if (wasSim && !store.settings.simulation) { rotaryState.state = 'offline'; rotaryState.message = 'Not connected'; }
       if (store.settings.rotary.autoSpin === false) stopSpin(); else if (spin.want) spinLoop();
+      if (JSON.stringify(MOTION_KEYS.map(k => store.settings.rotary[k])) !== motionBefore) applyMotion('settings saved');
       sse('status', linkStatus());
       sse('state', publicState());
       return send(res, 200, publicState());
@@ -591,7 +629,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/rotary/cmd' && req.method === 'POST') {
       const b = await readBody(req);
       const text = String(b.text || '').trim().toUpperCase();
-      if (!/^(JOG\s+-?\d+(\.\d+)?|GOTO\s+-?\d+(\.\d+)?|POS\??|SPEED\s+\d+(\.\d+)?|STOP)$/.test(text)) return send(res, 400, { error: 'Allowed: JOG <deg>, GOTO <deg>, POS?, SPEED <rpm>, STOP' });
+      if (!/^(JOG\s+-?\d+(\.\d+)?|GOTO\s+-?\d+(\.\d+)?|POS\??|CONFIG\??|SPEED\s+\d+(\.\d+)?|STOP)$/.test(text)) return send(res, 400, { error: 'Allowed: JOG <deg>, GOTO <deg>, POS?, SPEED <rpm>, STOP' });
       if (!isV05()) return send(res, 409, { error: 'Calibration needs the RotaryXL v05 firmware (Admin > Connection > Firmware)' });
       if (!spinState()) return send(res, 409, { error: 'Rotary is not ready (' + rotaryState.message + ')' });
       await stopSpin();

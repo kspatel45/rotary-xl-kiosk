@@ -518,6 +518,22 @@ function renderCalibration() {
     </tr>`).join('');
   renderCalPos();
   calDirty();
+  renderMotion();
+}
+function renderMotion() {
+  const r = state.settings.rotary;
+  $('#mo-move').value = r.moveRPM ?? 5;
+  $('#mo-run').value = r.spinRPM ?? 2;
+  $('#mo-up').value = r.rampUpSec ?? 3;
+  $('#mo-down').value = r.rampDownSec ?? 3;
+  $('#mo-dir').value = String(+r.cwDir === -1 ? -1 : 1);
+  motionInfo();
+}
+// show what the values mean: degrees per second and how far the ramps take
+function motionInfo() {
+  const mv = +$('#mo-move').value || 5, up = +$('#mo-up').value || 3, dn = +$('#mo-down').value || 3;
+  const dps = mv * 6;
+  $('#mo-info').textContent = `Move: ${dps.toFixed(0)}°/s. Ramp up takes ${(dps * up / 2).toFixed(0)}° and ramp down ${(dps * dn / 2).toFixed(0)}° at full speed; one column (30°) ≈ ${(30 / dps + (up + dn) / 2).toFixed(1)} s.`;
 }
 function renderCalPos() {
   const r = state.status?.rotary || {};
@@ -527,7 +543,7 @@ function renderCalPos() {
   $('#cal-near').textContent = r.angle == null || !calAngles ? '–' : 'C' + nearestCal(r.angle);
   const st = $('#cal-state'); st.className = 'state-tag ' + (r.state || ''); st.textContent = r.state || 'offline';
   const w = $('#cal-warn');
-  const msg = state.settings.rotary.firmware === 'legacy' ? 'Firmware is set to NEMA34_TEST v04: flash RotaryXL_v05 and choose it in Admin > Connection > Firmware to calibrate.'
+  const msg = state.settings.rotary.firmware === 'legacy' ? 'Firmware is set to NEMA34_TEST v04: flash RotaryXL_v06 and choose it in Admin > Connection > Firmware to calibrate.'
     : !ORDERABLE.includes(r.state) ? `Rotary is ${r.state || 'offline'} (${r.message || ''}). Connect it and wait for homing to finish.` : '';
   w.textContent = msg; w.classList.toggle('hidden', !msg);
   $$('[data-cal-row-at]').forEach(e => e.removeAttribute('data-cal-row-at'));
@@ -739,7 +755,7 @@ function renderConnection() {
   $('#rotary-spin-seq').value = s.rotary.spinSequence || '';
   $('#rotary-spin-pause').value = s.rotary.spinPauseMs || 0;
   $('#rotary-firmware').value = s.rotary.firmware || 'v05';
-  $('#rotary-spin-rpm').value = s.rotary.spinRPM || 2;
+
   const tpl = s.alfie.frameTemplate;
   const preset = $('#alfie-preset');
   preset.value = [...preset.options].some(o => o.value === tpl) ? tpl : 'custom';
@@ -766,7 +782,7 @@ function collectConnection() {
     newAdminPassword: $('#set-password').value.trim() || undefined,
     rotary: { port: $('#rotary-port').value, baud: +$('#rotary-baud').value, lineEnding: $('#rotary-le').value, moveTimeoutSec: +$('#rotary-timeout').value || 90, settleMs: Math.max(0, +$('#rotary-settle').value || 0), homeCommand: $('#rotary-home-cmd').value.trim() || 'HOME', homeOnConnect: $('#rotary-home-on-connect').checked,
       autoSpin: $('#rotary-auto-spin').checked, spinSequence: $('#rotary-spin-seq').value.trim(), spinPauseMs: Math.max(0, +$('#rotary-spin-pause').value || 0),
-      firmware: $('#rotary-firmware').value, spinRPM: Math.min(10, Math.max(0.2, +$('#rotary-spin-rpm').value || 2)) },
+      firmware: $('#rotary-firmware').value },
     alfie: {
       port: $('#alfie-port').value, baud: +$('#alfie-baud').value, lineEnding: $('#alfie-le').value,
       frameTemplate: $('#alfie-template').value.trim() || 't{ID}{DLC}{DATA}', initCommands: $('#alfie-init').value,
@@ -910,7 +926,7 @@ function wire() {
     const b = e.target.closest('[data-step]'); if (!b) return;
     calStep = +b.dataset.step;
     $$('#cal-steps button').forEach(x => x.classList.toggle('on', x === b));
-    $('#cal-left-lbl').textContent = `−${calStep}°`; $('#cal-right-lbl').textContent = `+${calStep}°`;
+    $('#cal-left-lbl').textContent = `−${calStep}° back`; $('#cal-right-lbl').textContent = `+${calStep}° CW`;
   });
   calJogButton($('#cal-left'), -1);
   calJogButton($('#cal-right'), +1);
@@ -934,6 +950,19 @@ function wire() {
     const v = parseFloat(e.target.value);
     if (Number.isFinite(v)) calAngles[+i] = Math.round((((v % 360) + 360) % 360) * 100) / 100;
     renderCalibration();
+  });
+  ['mo-move', 'mo-up', 'mo-down'].forEach(id => $('#' + id).addEventListener('input', motionInfo));
+  $('#mo-dir').addEventListener('change', () => toast('After changing the direction, re-check the column angles (they are counted the other way)'));
+  $('#mo-test').addEventListener('click', () => calCmd('JOG 30'));
+  $('#mo-save').addEventListener('click', async () => {
+    const lim = (v, lo, hi, d) => { v = +v; return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
+    const rotary = {
+      moveRPM: lim($('#mo-move').value, 0.2, 30, 5), spinRPM: lim($('#mo-run').value, 0.2, 30, 2),
+      rampUpSec: lim($('#mo-up').value, 0.05, 30, 3), rampDownSec: lim($('#mo-down').value, 0.05, 30, 3),
+      cwDir: $('#mo-dir').value === '-1' ? -1 : 1
+    };
+    try { const s = await api('/api/settings', 'PUT', { rotary }); state.settings = s.settings; renderMotion(); toast('Motion saved and sent to the rotary'); }
+    catch (e) { toast(e.message, true); }
   });
   $('#cal-even').addEventListener('click', () => { calAngles = calAngles.map((_, i) => i * 30); renderCalibration(); });
   $('#cal-save').addEventListener('click', async () => {

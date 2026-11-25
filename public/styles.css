@@ -449,3 +449,6 @@ h1, h2, h3, h4 { font-family: var(--head); letter-spacing: .2px; }
 .cal-tbl input { max-width: 120px; }
 .cal-tbl tr.here td { background: var(--ok-soft); }
 .cal-tbl .actions button { margin-left: 6px; padding: 8px 14px; }
+
+/* calibration: the calibration page has 3 cards */
+[data-pane="calibration"] .cards2 { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }

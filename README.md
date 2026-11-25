@@ -47,33 +47,39 @@ curl -fsSL https://kspatel45.github.io/rotary-xl-kiosk/install.sh | bash
 
 Both systems need Node.js 18 or newer. There is nothing to install with npm.
 
-## Rotary firmware v05 and calibration
+## Rotary firmware v06 and calibration
 
-Flash `firmware/RotaryXL_v05/RotaryXL_v05.ino` to the Arduino Mega. It needs the AccelStepper library, and keeps the pins, motor and encoder setup of NEMA34_TEST v04. The column angles are **not** in the firmware: the kiosk stores them and sends `GOTO <degrees>`, so re-calibrating never needs a re-flash.
+Flash `firmware/RotaryXL_v06/RotaryXL_v06.ino` to the Arduino Mega. It needs the AccelStepper library, and keeps the pins, motor, encoder and homing of NEMA34_TEST v04.
+
+* **Angles:** the 12 column angles live in the kiosk, which sends `GOTO <degrees>`. Re-calibrating never needs a re-flash.
+* **Clockwise only:** `GOTO` and `STOPNEAR` always turn forward, even when that is the long way round. All angles are clockwise degrees from HOME.
+* **Ramps:** the firmware has its own motion controller, with separate ramp-up and ramp-down times.
 
 | Command | Does |
 |---|---|
-| `HOME` | Find the Hall sensor and set 0°. |
-| `GOTO <deg>` | Move to an absolute angle, the shortest way. |
-| `JOG <±deg>` | Move relative, e.g. `JOG 0.5` or `JOG -10`. |
-| `SPIN [rpm]` | Turn continuously; the kiosk uses this for the idle spin. |
-| `STOPNEAR <a1> <a2> …` | Slow down and stop exactly on the first listed angle ahead; Order now sends the 12 column angles. |
-| `STOP` | Stop where it is. |
+| `HOME` | Find the Hall sensor (turning clockwise) and set 0°. |
+| `GOTO <deg>` | Turn clockwise to an angle. |
+| `JOG <±deg>` | `+` = clockwise; `−` = back (calibration only). |
+| `SPIN [rpm]` | Free run, clockwise (idle spin). |
+| `STOPNEAR <a1> <a2> …` | Ramp down and stop exactly on the first listed angle ahead (Order now). |
+| `STOP` | Ramp down and stop. |
+| `SPEED <rpm>` | Move speed for GOTO/JOG. |
+| `RUNSPEED <rpm>` | Free-run speed. |
+| `RAMP <up s> <down s>` | Ramp-up and ramp-down times. |
+| `DIR <1\|-1>` | Which motor direction is clockwise. |
 | `POS?` | Report the position. |
-| `SPEED <rpm>` | Set the GOTO/JOG speed. |
+| `CONFIG?` | Report the motion settings. |
 
-Every command ends with `Command Complete.`. Moves and position queries print `POS <commanded°> <encoder°>` just before it. Passing HOME in the homing direction no longer stops the motor: the firmware re-syncs the position instead, which corrects drift.
+Every command ends with `Command Complete.`. Moves print `POS <angle> <encoder angle>` just before it. Passing HOME clockwise re-syncs the position (corrects drift) instead of stopping.
 
-**To calibrate (Admin → Calibration):**
-1. Pick a step size (0.1°–30°).
-2. Use ◀ / ▶ to jog the carousel until a column sits exactly in front of the door. Hold an arrow to keep jogging.
-3. Press **Set** on that column's row.
-4. Repeat for all 12 columns, then press **Save calibration**.
-5. **Go** on a row moves to that column, to check it.
+**Admin → Calibration:**
+* **Motion card:** move speed, free-run speed, ramp up, ramp down, and the clockwise direction. **Save motion** sends them to the Arduino straight away. They are also re-sent after every homing, because the Arduino forgets them on reset.
+* **Test: 30° clockwise:** turns 30° clockwise. If it turns the wrong way, switch **Clockwise motor direction** and re-check the column angles.
+* **Calibrating a column:** jog with ◀ / ▶ until the column sits exactly in front of the door, then press **Set**. Finish each column with ▶ so it is set from the side it is normally approached from (gear backlash). **Save calibration** keeps the angles.
 
-The live readout shows the commanded angle and the encoder angle. If they drift apart, the motor is losing steps, or the driver's pulses-per-revolution switch setting doesn't match `motorStepsPerRev` in the firmware.
+The live readout shows the commanded angle and the encoder angle. If they drift apart, the motor is losing steps, or the driver's pulses-per-revolution switches don't match `motorStepsPerRev`.
 
-To keep using the old NEMA34_TEST v04 with its fixed C1–C12, set **Admin → Connection → Firmware** to v04.
+To use the old NEMA34_TEST v04 with its fixed C1–C12, set **Admin → Connection → Firmware** to v04.
 
 ## Machine flow
 

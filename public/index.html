@@ -183,11 +183,11 @@
           <div class="two">
             <label>Firmware
               <select id="rotary-firmware">
-                <option value="v05">RotaryXL v05: angles from Calibration</option>
+                <option value="v05">RotaryXL v06 / v05: angles from Calibration</option>
                 <option value="legacy">NEMA34_TEST v04: fixed C1–C12</option>
               </select>
             </label>
-            <label>Idle spin speed (rpm, v05) <input type="number" id="rotary-spin-rpm" min="0.2" max="10" step="0.1"></label>
+            <p class="hint" style="align-self:end">Speeds, ramps and direction: Admin → Calibration → Motion.</p>
           </div>
           <label>Spin order (v04 only) <input id="rotary-spin-seq" placeholder="C1,C2,C3,C4,C5,C6,C7,C8,C9,C10,C11,C12"></label>
           <p class="hint">Auto-spin: after homing, the carousel keeps turning column after column. <b>Order now</b> stops it once the current move finishes, so it always stops on a column. Checkout then turns to the product's column.</p>
@@ -260,7 +260,7 @@
       <div class="pane-head">
         <div>
           <h3>Rotary calibration</h3>
-          <p class="muted">Jog the carousel until a column is exactly in front of the door, then press <b>Set</b> on that column. Checkout sends <code>GOTO &lt;angle&gt;</code>, so the firmware never has to change. Needs the RotaryXL v05 firmware.</p>
+          <p class="muted">Jog the carousel until a column is exactly in front of the door, then press <b>Set</b> on that column. Checkout sends <code>GOTO &lt;angle&gt;</code>, so the firmware never has to change. Needs the RotaryXL v06 firmware.</p>
         </div>
       </div>
       <div class="cal-warn hidden" id="cal-warn"></div>
@@ -280,20 +280,41 @@
           <div class="cal-jog">
             <button class="jog" id="cal-left" aria-label="Rotate left (minus)">
               <svg viewBox="0 0 24 24" width="40" height="40"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              <span id="cal-left-lbl">−1°</span>
+              <span id="cal-left-lbl">−1° back</span>
             </button>
             <button class="jog" id="cal-right" aria-label="Rotate right (plus)">
-              <span id="cal-right-lbl">+1°</span>
+              <span id="cal-right-lbl">+1° CW</span>
               <svg viewBox="0 0 24 24" width="40" height="40"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
           </div>
-          <p class="hint">Hold an arrow to keep jogging. Each press moves exactly one step.</p>
+          <p class="hint">▶ turns clockwise, the only way the carousel runs. ◀ turns back and is only for calibration: finish each column with ▶, so it is set from the same side it is approached from.</p>
           <div class="inline">
             <input type="number" id="cal-goto" step="0.1" min="0" max="360" placeholder="Go to angle, e.g. 92.5">
             <button class="btn-secondary" id="cal-goto-btn">Go</button>
             <button class="btn-secondary" id="cal-home">Home</button>
             <button class="btn-secondary" id="cal-read">Read</button>
           </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Motion</div>
+          <p class="hint">The carousel always turns clockwise. These values are sent to the Arduino after every homing and when you press Save. Needs firmware v06.</p>
+          <div class="two">
+            <label>Move speed (rpm) <input type="number" id="mo-move" min="0.2" max="30" step="0.1"></label>
+            <label>Free-run speed (rpm) <input type="number" id="mo-run" min="0.2" max="30" step="0.1"></label>
+          </div>
+          <div class="two">
+            <label>Ramp up (s, 0 → full speed) <input type="number" id="mo-up" min="0.05" max="30" step="0.1"></label>
+            <label>Ramp down (s, full speed → 0) <input type="number" id="mo-down" min="0.05" max="30" step="0.1"></label>
+          </div>
+          <div class="two">
+            <label>Clockwise motor direction
+              <select id="mo-dir"><option value="1">Normal (DIR 1)</option><option value="-1">Reversed (DIR -1)</option></select>
+            </label>
+            <label>&nbsp;<button class="btn-secondary" id="mo-test" type="button">Test: 30° clockwise</button></label>
+          </div>
+          <p class="hint" id="mo-info"></p>
+          <div class="btn-row"><button class="btn-primary" id="mo-save">Save motion</button></div>
         </div>
 
         <div class="card">
