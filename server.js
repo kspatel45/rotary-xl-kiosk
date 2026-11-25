@@ -57,9 +57,12 @@ const DEFAULT_STORE = {
       homeOnConnect: true,        // send the home command every time the port connects
       homeCommand: 'HOME',        // NEMA34_TEST: HOME (or C1) runs homeMotor()
       bootWaitSec: 60,            // the Mega resets when the port opens and homes in setup(): wait for "System Ready."
-      autoSpin: true,             // keep the carousel turning (column after column) while the kiosk is idle
-      spinSequence: '',           // order of the idle spin; empty = C1,C2,...,C12
-      spinPauseMs: 0              // pause on each column during the idle spin
+      autoSpin: true,             // keep the carousel turning while the kiosk is idle
+      firmware: 'v05',            // 'v05' = RotaryXL_v05 (GOTO <deg>, angles from Admin > Calibration) | 'legacy' = NEMA34_TEST v04 (C1-C12)
+      columnAngles: [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330],   // degrees of C1..C12 at the door (Calibration page)
+      spinRPM: 2,                 // v05: continuous idle spin speed
+      spinSequence: '',           // legacy only: order of the idle indexing; empty = C1,C2,...,C12
+      spinPauseMs: 0              // legacy only: pause on each column during the idle indexing
     },
     alfie: {
       port: '', baud: 115200, lineEnding: 'CR',
@@ -163,7 +166,7 @@ const links = {
 
 // rotary machine state: offline -> connecting -> homing -> ready | error
 // (spinning / stopping while idle-spinning; column = last column the carousel stopped at, 1 = HOME)
-const rotaryState = { state: 'offline', message: 'Not connected', homing: false, column: 1 };
+const rotaryState = { state: 'offline', message: 'Not connected', homing: false, column: 1, angle: null, encAngle: null };
 function setRotary(state, message) {
   rotaryState.state = state; rotaryState.message = message;
   emitLine('rotary', `[${state}] ${message}`, 'sys');
@@ -173,7 +176,7 @@ function setRotary(state, message) {
 function linkStatus() {
   return {
     simulation: !!store.settings.simulation,
-    rotary: { open: !!links.rotary.port || !!store.settings.simulation, port: links.rotary.port, state: rotaryState.state, message: rotaryState.message, column: rotaryState.column, spinWanted: spin.want },
+    rotary: { open: !!links.rotary.port || !!store.settings.simulation, port: links.rotary.port, state: rotaryState.state, message: rotaryState.message, column: rotaryState.column, spinWanted: spin.want, angle: rotaryState.angle, encAngle: rotaryState.encAngle, firmware: store.settings.rotary.firmware || 'v05' },
     alfie: { open: !!links.alfie.port || !!store.settings.simulation, port: links.alfie.port }
   };
 }
@@ -181,6 +184,10 @@ function linkStatus() {
 const lineListeners = new Set();
 function emitLine(role, text, dir) {
   sse('line', { role, dir, text, t: Date.now() });
+  if (dir === 'rx' && role === 'rotary') {
+    const m = text.match(/^POS\s+(-?[\d.]+)\s+(-?[\d.]+)/);   // v05 position report: commanded / encoder angle
+    if (m) { rotaryState.angle = +m[1]; rotaryState.encAngle = +m[2]; }
+  }
   if (dir === 'rx') for (const fn of [...lineListeners]) fn(role, text);
 }
 
@@ -253,6 +260,27 @@ async function runColumn(cmd) {
   return { ok: true };
 }
 
+const isV05 = () => store.settings.rotary.firmware !== 'legacy';
+function columnAngle(col) {
+  const a = (store.settings.rotary.columnAngles || [])[col - 1];
+  return Number.isFinite(+a) ? Math.round(+a * 100) / 100 : (col - 1) * 30;
+}
+// which column is closest to an angle (after a stop)
+function nearestColumn(angle) {
+  let best = 1, bestD = 1e9;
+  for (let c = 1; c <= 12; c++) {
+    const d = Math.abs((((columnAngle(c) - angle) % 360) + 540) % 360 - 180);
+    if (d < bestD) { bestD = d; best = c; }
+  }
+  return best;
+}
+async function moveColumn(col) {
+  if (!isV05()) return runColumn('C' + col);
+  const r = await runColumn('GOTO ' + columnAngle(col));
+  if (r.ok) rotaryState.column = col;
+  return r;
+}
+
 const spinState = () => ['ready', 'spinning', 'stopping'].includes(rotaryState.state);
 const spin = { want: true, running: false, idx: 0, idle: [] };
 function spinSequence() {
@@ -265,6 +293,13 @@ function spinSequence() {
 async function spinLoop() {
   if (spin.running || !spinState() || store.settings.rotary.autoSpin === false) return;
   spin.running = true;
+  if (isV05()) {                                   // the firmware turns continuously by itself
+    const r = await rotaryJob(() => runColumn('SPIN ' + (+store.settings.rotary.spinRPM || 2))).catch(e => ({ ok: false, error: e.message }));
+    if (!r.ok) { spin.running = false; setRotary('error', 'Spin failed: ' + r.error); return; }
+    if (!spin.want) { spin.running = false; return stopV05(); }   // stop was asked while SPIN was being sent
+    setRotary('spinning', 'Spinning');
+    return;
+  }
   const seq = spinSequence();
   const here = seq.indexOf('C' + (rotaryState.column || 1));
   spin.idx = here >= 0 ? here + 1 : 0;
@@ -286,9 +321,26 @@ async function spinLoop() {
   }
 }
 function startSpin() { spin.want = true; spinLoop(); }
+
+// v05: decelerate and stop exactly on the first column angle ahead (firmware STOPNEAR)
+let stopping = null;
+function stopV05() {
+  if (stopping) return stopping;
+  if (rotaryState.state === 'spinning') setRotary('stopping', 'Stopping at the nearest column…');
+  const angles = Array.from({ length: 12 }, (_, i) => columnAngle(i + 1)).join(' ');
+  stopping = rotaryJob(() => runColumn('STOPNEAR ' + angles)).catch(e => ({ ok: false, error: e.message })).then(r => {
+    spin.running = false; stopping = null;
+    if (!r.ok) { setRotary('error', 'Stop failed: ' + r.error); return; }
+    rotaryState.column = rotaryState.angle == null ? rotaryState.column : nearestColumn(rotaryState.angle);
+    setRotary('ready', `Stopped at column ${rotaryState.column}`);
+  });
+  return stopping;
+}
+
 // resolves once the carousel is standing still on a column
 function stopSpin() {
   spin.want = false;
+  if (isV05()) return spin.running ? stopV05() : (stopping || Promise.resolve());
   if (!spin.running) return Promise.resolve();
   if (rotaryState.state === 'spinning') setRotary('stopping', 'Stopping at the nearest column…');
   return new Promise(res => spin.idle.push(res));
@@ -297,11 +349,12 @@ function stopSpin() {
 // Checkout: stop the idle spin, then bring `col` to the door. A move that crosses HOME is stopped there by the
 // firmware, so it is sent once more from HOME.
 async function gotoColumn(col) {
-  await stopSpin();
+  if (isV05() && spin.running && !stopping) { spin.want = false; spin.running = false; }   // firmware re-targets the spin
+  else await stopSpin();
   if (!spinState()) throw new Error('Rotary is not ready (' + rotaryState.message + ')');
   for (let attempt = 1; attempt <= 2; attempt++) {
-    const r = await rotaryJob(() => runColumn('C' + col));
-    if (r.ok) { sse('status', linkStatus()); return; }
+    const r = await rotaryJob(() => moveColumn(col));
+    if (r.ok) { if (rotaryState.state !== 'ready') setRotary('ready', `At column ${col}`); else sse('status', linkStatus()); return; }
     if (!r.hall) throw new Error('Rotary: ' + r.error);
     emitLine('rotary', `[hall] passed HOME on the way to C${col}, sending it again`, 'sys');
   }
@@ -385,14 +438,62 @@ function writeLink(role, text) {
 // ------------------------------------------------------------------ simulation (mimics NEMA34 firmware + Alfie)
 function simSay(role, text, delay) { setTimeout(() => emitLine(role, text, 'rx'), delay); }
 
+// simulated RotaryXL_v05: a position that moves at 5 rpm (30 deg/s) for GOTO/JOG and spins at SPIN rpm
+const simR = { angle: 0, spin: null };
+const norm360 = a => ((a % 360) + 360) % 360;
+function simNow() {
+  if (!simR.spin) return simR.angle;
+  return norm360(simR.spin.from + simR.spin.rpm * 6 * (Date.now() - simR.spin.t0) / 1000);
+}
+function simV05(text) {
+  const say = (lines, t) => lines.forEach((l, i) => simSay('rotary', l, t + i * 15));
+  const pos = a => `POS ${a.toFixed(2)} ${a.toFixed(2)}`;
+  const [cmd, ...rest] = text.trim().toUpperCase().split(/[\s,]+/);
+  const nums = rest.map(Number).filter(Number.isFinite);
+  const cur = simNow();
+  const travel = d => Math.abs(d) / 30 * 1000 + 350;                       // 5 rpm = 30 deg/s
+  const shortest = (from, to) => ((((to - from) % 360) + 540) % 360) - 180;
+  if (cmd === 'GOTO' && nums.length) {
+    const d = shortest(cur, nums[0]); simR.spin = null; simR.angle = norm360(nums[0]);
+    return say(['Move Complete', pos(simR.angle), 'Command Complete.'], travel(d));
+  }
+  if (cmd === 'JOG' && nums.length) {
+    if (simR.spin) return say(['ERROR: BUSY', 'Command Complete.'], 20);
+    simR.angle = norm360(cur + nums[0]);
+    return say(['Move Complete', pos(simR.angle), 'Command Complete.'], travel(nums[0]));
+  }
+  if (cmd === 'SPIN') {
+    simR.spin = { t0: Date.now(), from: cur, rpm: nums[0] || 2 };
+    return say(['SPINNING', pos(cur), 'Command Complete.'], 30);
+  }
+  if (cmd === 'STOPNEAR' && nums.length) {
+    const ahead = simR.spin ? 3 : -180;                                     // need a few degrees to decelerate
+    let best = null, bestD = 1e9;
+    for (const a of nums) {
+      let d = simR.spin ? norm360(a - cur) : shortest(cur, a);
+      if (simR.spin && d < ahead) d += 360;
+      if (Math.abs(d) < bestD) { bestD = Math.abs(d); best = a; }
+    }
+    const rpm = simR.spin ? simR.spin.rpm : 5;
+    simR.spin = null; simR.angle = norm360(best);
+    return say(['Move Complete', pos(simR.angle), 'Command Complete.'], bestD / (rpm * 6) * 1000 * 1.3 + 300);
+  }
+  if (cmd === 'STOP') { simR.spin = null; simR.angle = cur; return say(['Stopped', pos(cur), 'Command Complete.'], 600); }
+  if (cmd === 'POS?' || cmd === 'POS') return say([pos(cur), 'Command Complete.'], 20);
+  if (cmd === 'SPEED') return say(['SPEED ' + (nums[0] || 5), 'Command Complete.'], 20);
+  return say(['Invalid Command: ' + cmd, 'Command Complete.'], 20);
+}
+
 function simulate(role, text) {
   if (role === 'rotary') {
-    if (/^(HOME|C1)$/i.test(text.trim()) && rotaryState.homing) {   // homing sequence of NEMA34_TEST
+    if (/^(HOME|C1)$/i.test(text.trim()) && rotaryState.homing) {   // homing sequence (same text in v04 and v05)
+      simR.angle = 0; simR.spin = null;
       simSay('rotary', 'HOMING', 200); simSay('rotary', 'Searching for HOME...', 400);
       simSay('rotary', 'Hall sensor detected.', 2600); simSay('rotary', 'HOME COMPLETE', 2700);
-      simSay('rotary', 'Command Complete.', 2900);
+      simSay('rotary', 'POS 0.00 0.00', 2800); simSay('rotary', 'Command Complete.', 2900);
       return;
     }
+    if (isV05()) return simV05(text);
     const cmds = text.split(',').map(c => c.trim().toUpperCase()).filter(Boolean);
     let t = 300;
     for (const c of cmds) {
@@ -486,6 +587,20 @@ const server = http.createServer(async (req, res) => {
       await stopSpin();
       return send(res, 200, { ok: true, column: rotaryState.column, status: linkStatus() });
     }
+    // calibration: JOG / GOTO / POS? / SPEED / STOP, waits for "Command Complete." and returns the position
+    if (p === '/api/rotary/cmd' && req.method === 'POST') {
+      const b = await readBody(req);
+      const text = String(b.text || '').trim().toUpperCase();
+      if (!/^(JOG\s+-?\d+(\.\d+)?|GOTO\s+-?\d+(\.\d+)?|POS\??|SPEED\s+\d+(\.\d+)?|STOP)$/.test(text)) return send(res, 400, { error: 'Allowed: JOG <deg>, GOTO <deg>, POS?, SPEED <rpm>, STOP' });
+      if (!isV05()) return send(res, 409, { error: 'Calibration needs the RotaryXL v05 firmware (Admin > Connection > Firmware)' });
+      if (!spinState()) return send(res, 409, { error: 'Rotary is not ready (' + rotaryState.message + ')' });
+      await stopSpin();
+      const r = await rotaryJob(() => runColumn(text)).catch(e => ({ ok: false, error: e.message }));
+      sse('status', linkStatus());
+      if (!r.ok) return send(res, 409, { error: r.error });
+      return send(res, 200, { ok: true, angle: rotaryState.angle, encAngle: rotaryState.encAngle });
+    }
+
     // checkout: bring a column to the door (stops the spin first)
     if (p === '/api/rotary/goto' && req.method === 'POST') {
       const b = await readBody(req);

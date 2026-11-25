@@ -47,6 +47,34 @@ curl -fsSL https://kspatel45.github.io/rotary-xl-kiosk/install.sh | bash
 
 Both systems need Node.js 18 or newer. There is nothing to install with npm.
 
+## Rotary firmware v05 and calibration
+
+Flash `firmware/RotaryXL_v05/RotaryXL_v05.ino` to the Arduino Mega. It needs the AccelStepper library, and keeps the pins, motor and encoder setup of NEMA34_TEST v04. The column angles are **not** in the firmware: the kiosk stores them and sends `GOTO <degrees>`, so re-calibrating never needs a re-flash.
+
+| Command | Does |
+|---|---|
+| `HOME` | Find the Hall sensor and set 0°. |
+| `GOTO <deg>` | Move to an absolute angle, the shortest way. |
+| `JOG <±deg>` | Move relative, e.g. `JOG 0.5` or `JOG -10`. |
+| `SPIN [rpm]` | Turn continuously; the kiosk uses this for the idle spin. |
+| `STOPNEAR <a1> <a2> …` | Slow down and stop exactly on the first listed angle ahead; Order now sends the 12 column angles. |
+| `STOP` | Stop where it is. |
+| `POS?` | Report the position. |
+| `SPEED <rpm>` | Set the GOTO/JOG speed. |
+
+Every command ends with `Command Complete.`. Moves and position queries print `POS <commanded°> <encoder°>` just before it. Passing HOME in the homing direction no longer stops the motor: the firmware re-syncs the position instead, which corrects drift.
+
+**To calibrate (Admin → Calibration):**
+1. Pick a step size (0.1°–30°).
+2. Use ◀ / ▶ to jog the carousel until a column sits exactly in front of the door. Hold an arrow to keep jogging.
+3. Press **Set** on that column's row.
+4. Repeat for all 12 columns, then press **Save calibration**.
+5. **Go** on a row moves to that column, to check it.
+
+The live readout shows the commanded angle and the encoder angle. If they drift apart, the motor is losing steps, or the driver's pulses-per-revolution switch setting doesn't match `motorStepsPerRev` in the firmware.
+
+To keep using the old NEMA34_TEST v04 with its fixed C1–C12, set **Admin → Connection → Firmware** to v04.
+
 ## Machine flow
 
 **Idle spin.** After homing, the carousel keeps turning one column after another (C1 → C2 → … → C12 → C1). The firmware has no continuous-spin command, so this is how it spins.

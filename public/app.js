@@ -308,7 +308,7 @@ function onLine(msg) {
 function connectStream() {
   const es = new EventSource('/api/stream');
   es.addEventListener('line', e => onLine(JSON.parse(e.data)));
-  es.addEventListener('status', e => { state.status = JSON.parse(e.data); renderStatus(); renderMachine(); });
+  es.addEventListener('status', e => { state.status = JSON.parse(e.data); renderStatus(); renderMachine(); if (document.body.dataset.view === 'admin') renderCalPos(); });
   es.addEventListener('state', e => {
     const s = JSON.parse(e.data);
     state.settings = s.settings; state.products = s.products; state.status = s.status;
@@ -502,11 +502,71 @@ const slotOpts = sel => opts(Array.from({ length: 10 }, (_, i) => [i + 1, `Shelf
 function freeSlot(col) { const used = new Set(state.products.filter(p => +p.column === +col).map(p => +p.slot || 1)); for (let s = 1; s <= 10; s++) if (!used.has(s)) return s; return 1; }
 const locKey = p => `${p.column}-${p.alfie || 1}-${p.compartment}`;
 
+// ================================================================ rotary calibration (Admin > Calibration)
+let calStep = 1;
+let calAngles = null;          // working copy of the 12 column angles (saved with "Save calibration")
+let calSaved = '';
+const fmtDeg = a => (a == null || !Number.isFinite(+a)) ? '–' : (+a).toFixed(2);
+
+function renderCalibration() {
+  const s = state.settings.rotary;
+  if (!calAngles) { calAngles = (s.columnAngles || []).slice(0, 12).map(Number); while (calAngles.length < 12) calAngles.push(calAngles.length * 30); calSaved = JSON.stringify(calAngles); }
+  $('#cal-rows').innerHTML = calAngles.map((a, i) => `<tr data-col="${i + 1}">
+      <td><b>C${i + 1}</b></td>
+      <td><input type="number" step="0.1" min="0" max="360" value="${(+a).toFixed(2)}" data-cal-angle="${i}"></td>
+      <td class="actions"><button class="btn-secondary" data-cal-go="${i}">Go</button><button class="btn-primary" data-cal-set="${i}">Set</button></td>
+    </tr>`).join('');
+  renderCalPos();
+  calDirty();
+}
+function renderCalPos() {
+  const r = state.status?.rotary || {};
+  if (!$('#cal-angle')) return;
+  $('#cal-angle').textContent = fmtDeg(r.angle);
+  $('#cal-enc').textContent = fmtDeg(r.encAngle);
+  $('#cal-near').textContent = r.angle == null || !calAngles ? '–' : 'C' + nearestCal(r.angle);
+  const st = $('#cal-state'); st.className = 'state-tag ' + (r.state || ''); st.textContent = r.state || 'offline';
+  const w = $('#cal-warn');
+  const msg = state.settings.rotary.firmware === 'legacy' ? 'Firmware is set to NEMA34_TEST v04: flash RotaryXL_v05 and choose it in Admin > Connection > Firmware to calibrate.'
+    : !ORDERABLE.includes(r.state) ? `Rotary is ${r.state || 'offline'} (${r.message || ''}). Connect it and wait for homing to finish.` : '';
+  w.textContent = msg; w.classList.toggle('hidden', !msg);
+  $$('[data-cal-row-at]').forEach(e => e.removeAttribute('data-cal-row-at'));
+  if (r.angle != null && calAngles) $$('#cal-rows tr').forEach(tr => tr.classList.toggle('here', Math.abs(((calAngles[tr.dataset.col - 1] - r.angle) % 360 + 540) % 360 - 180) < 0.05));
+}
+function nearestCal(angle) {
+  let best = 1, bd = 1e9;
+  calAngles.forEach((a, i) => { const d = Math.abs(((a - angle) % 360 + 540) % 360 - 180); if (d < bd) { bd = d; best = i + 1; } });
+  return best;
+}
+function calDirty() {
+  const dirty = JSON.stringify(calAngles) !== calSaved;
+  $('#cal-dirty').textContent = dirty ? 'Unsaved changes' : 'Saved';
+  $('#cal-dirty').style.color = dirty ? 'var(--red)' : '';
+}
+let calBusy = false;
+async function calCmd(text) {
+  if (calBusy) return false;
+  calBusy = true;
+  try { await api('/api/rotary/cmd', 'POST', { text }); return true; }
+  catch (e) { toast(e.message, true); return false; }
+  finally { calBusy = false; renderCalPos(); }
+}
+// hold-to-repeat jog: one JOG per completed move while the button is held
+function calJogButton(btn, sign) {
+  let held = false;
+  const go = async () => { while (held) { const ok = await calCmd(`JOG ${(sign * calStep).toFixed(2)}`); if (!ok) break; } };
+  const down = e => { e.preventDefault(); if (held) return; held = true; go(); setTimeout(() => { if (!btn.matches(':active')) held = false; }, 250); };
+  const up = () => { held = false; };
+  btn.addEventListener('pointerdown', down);
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => btn.addEventListener(ev, up));
+}
+
 function renderAdmin() {
   renderProductRows();
   renderConnection();
   renderColumns();
   renderTest();
+  calAngles = null; renderCalibration();
   renderStatus();
 }
 
@@ -678,6 +738,8 @@ function renderConnection() {
   $('#rotary-auto-spin').checked = s.rotary.autoSpin !== false;
   $('#rotary-spin-seq').value = s.rotary.spinSequence || '';
   $('#rotary-spin-pause').value = s.rotary.spinPauseMs || 0;
+  $('#rotary-firmware').value = s.rotary.firmware || 'v05';
+  $('#rotary-spin-rpm').value = s.rotary.spinRPM || 2;
   const tpl = s.alfie.frameTemplate;
   const preset = $('#alfie-preset');
   preset.value = [...preset.options].some(o => o.value === tpl) ? tpl : 'custom';
@@ -703,7 +765,8 @@ function collectConnection() {
     soldOutAfterVend: $('#set-soldout').checked,
     newAdminPassword: $('#set-password').value.trim() || undefined,
     rotary: { port: $('#rotary-port').value, baud: +$('#rotary-baud').value, lineEnding: $('#rotary-le').value, moveTimeoutSec: +$('#rotary-timeout').value || 90, settleMs: Math.max(0, +$('#rotary-settle').value || 0), homeCommand: $('#rotary-home-cmd').value.trim() || 'HOME', homeOnConnect: $('#rotary-home-on-connect').checked,
-      autoSpin: $('#rotary-auto-spin').checked, spinSequence: $('#rotary-spin-seq').value.trim(), spinPauseMs: Math.max(0, +$('#rotary-spin-pause').value || 0) },
+      autoSpin: $('#rotary-auto-spin').checked, spinSequence: $('#rotary-spin-seq').value.trim(), spinPauseMs: Math.max(0, +$('#rotary-spin-pause').value || 0),
+      firmware: $('#rotary-firmware').value, spinRPM: Math.min(10, Math.max(0.2, +$('#rotary-spin-rpm').value || 2)) },
     alfie: {
       port: $('#alfie-port').value, baud: +$('#alfie-baud').value, lineEnding: $('#alfie-le').value,
       frameTemplate: $('#alfie-template').value.trim() || 't{ID}{DLC}{DATA}', initCommands: $('#alfie-init').value,
@@ -837,7 +900,49 @@ function wire() {
     try { const s = await api('/api/settings', 'PUT', { alfies: collectColumns() }); state.settings = s.settings; renderAdmin(); toast('Alfie doors saved'); } catch (e) { toast(e.message, true); }
   });
 
-  $('#test-cols').addEventListener('click', e => { const b = e.target.closest('[data-rot]'); if (b) safeSend('rotary', 'C' + b.dataset.rot); });
+  $('#test-cols').addEventListener('click', async e => {
+    const b = e.target.closest('[data-rot]'); if (!b) return;
+    try { await api('/api/rotary/goto', 'POST', { column: +b.dataset.rot }); } catch (err) { toast(err.message, true); }
+  });
+
+  // calibration page
+  $('#cal-steps').addEventListener('click', e => {
+    const b = e.target.closest('[data-step]'); if (!b) return;
+    calStep = +b.dataset.step;
+    $$('#cal-steps button').forEach(x => x.classList.toggle('on', x === b));
+    $('#cal-left-lbl').textContent = `−${calStep}°`; $('#cal-right-lbl').textContent = `+${calStep}°`;
+  });
+  calJogButton($('#cal-left'), -1);
+  calJogButton($('#cal-right'), +1);
+  $('#cal-goto-btn').addEventListener('click', () => { const v = parseFloat($('#cal-goto').value); if (Number.isFinite(v)) calCmd(`GOTO ${((v % 360) + 360) % 360}`); });
+  $('#cal-read').addEventListener('click', () => calCmd('POS?'));
+  $('#cal-home').addEventListener('click', async () => { try { await api('/api/serial/rotary/home', 'POST', {}); toast('Homing started'); } catch (e) { toast(e.message, true); } });
+  $('#cal-rows').addEventListener('click', e => {
+    const go = e.target.closest('[data-cal-go]');
+    if (go) return calCmd(`GOTO ${calAngles[+go.dataset.calGo]}`);
+    const set = e.target.closest('[data-cal-set]');
+    if (set) {
+      const a = state.status?.rotary?.angle;
+      if (a == null) return toast('Position unknown: press Read first', true);
+      calAngles[+set.dataset.calSet] = Math.round(a * 100) / 100;
+      renderCalibration();
+      toast(`C${+set.dataset.calSet + 1} = ${fmtDeg(a)}° (press Save calibration to keep it)`);
+    }
+  });
+  $('#cal-rows').addEventListener('change', e => {
+    const i = e.target.dataset.calAngle; if (i == null) return;
+    const v = parseFloat(e.target.value);
+    if (Number.isFinite(v)) calAngles[+i] = Math.round((((v % 360) + 360) % 360) * 100) / 100;
+    renderCalibration();
+  });
+  $('#cal-even').addEventListener('click', () => { calAngles = calAngles.map((_, i) => i * 30); renderCalibration(); });
+  $('#cal-save').addEventListener('click', async () => {
+    try {
+      const s = await api('/api/settings', 'PUT', { rotary: { columnAngles: calAngles } });
+      state.settings = s.settings; calSaved = JSON.stringify(calAngles); calDirty();
+      toast('Calibration saved');
+    } catch (e) { toast(e.message, true); }
+  });
   $('#btn-rotary-raw').addEventListener('click', () => { const v = $('#rotary-raw').value.trim(); if (v) safeSend('rotary', v); });
   $('#btn-test-open').addEventListener('click', () => safeSend('alfie', buildFrame(+$('#test-latch-col').value, [0x4F, +$('#test-latch-num').value])));
   $('#btn-test-query').addEventListener('click', () => safeSend('alfie', buildFrame(+$('#test-latch-col').value, [0x51, +$('#test-latch-num').value])));

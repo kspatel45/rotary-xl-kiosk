@@ -113,6 +113,7 @@
     <nav class="tabs" id="admin-tabs">
       <button data-tab="products" class="active">Products</button>
       <button data-tab="connection">Connection</button>
+      <button data-tab="calibration">Calibration</button>
       <button data-tab="columns">Alfie doors</button>
       <button data-tab="test">Test &amp; Log</button>
     </nav>
@@ -179,7 +180,16 @@
             <label class="switch-row tight"><input type="checkbox" id="rotary-auto-spin"><span class="switch"></span><span>Auto-spin when idle</span></label>
             <label>Pause on each column (ms) <input type="number" id="rotary-spin-pause" min="0" max="10000" step="100"></label>
           </div>
-          <label>Spin order <input id="rotary-spin-seq" placeholder="C1,C2,C3,C4,C5,C6,C7,C8,C9,C10,C11,C12"></label>
+          <div class="two">
+            <label>Firmware
+              <select id="rotary-firmware">
+                <option value="v05">RotaryXL v05: angles from Calibration</option>
+                <option value="legacy">NEMA34_TEST v04: fixed C1–C12</option>
+              </select>
+            </label>
+            <label>Idle spin speed (rpm, v05) <input type="number" id="rotary-spin-rpm" min="0.2" max="10" step="0.1"></label>
+          </div>
+          <label>Spin order (v04 only) <input id="rotary-spin-seq" placeholder="C1,C2,C3,C4,C5,C6,C7,C8,C9,C10,C11,C12"></label>
           <p class="hint">Auto-spin: after homing, the carousel keeps turning column after column. <b>Order now</b> stops it once the current move finishes, so it always stops on a column. Checkout then turns to the product's column.</p>
           <p class="hint">Firmware default: 9600 baud, Newline (LF). On connect the app waits for the Mega to start, sends the home command and waits for "HOME COMPLETE". Customers can only order after that.</p>
           <div class="btn-row"><button class="btn-primary" data-open="rotary">Connect</button><button class="btn-secondary" id="btn-home-now">Home now</button><button class="btn-secondary" data-close="rotary">Disconnect</button></div>
@@ -243,6 +253,62 @@
         </table>
       </div>
       <div class="save-bar"><button class="btn-primary" id="btn-save-cols">Save Alfie doors</button></div>
+    </div>
+
+    <!-- calibration -->
+    <div class="tab-pane" data-pane="calibration">
+      <div class="pane-head">
+        <div>
+          <h3>Rotary calibration</h3>
+          <p class="muted">Jog the carousel until a column is exactly in front of the door, then press <b>Set</b> on that column. Checkout sends <code>GOTO &lt;angle&gt;</code>, so the firmware never has to change. Needs the RotaryXL v05 firmware.</p>
+        </div>
+      </div>
+      <div class="cal-warn hidden" id="cal-warn"></div>
+
+      <div class="cards2">
+        <div class="card">
+          <div class="card-title">Position <span class="state-tag" id="cal-state"></span></div>
+          <div class="cal-pos">
+            <div><span class="cal-big" id="cal-angle">–</span><span class="cal-unit">°</span></div>
+            <div class="muted">Encoder: <b id="cal-enc">–</b>° · Nearest column: <b id="cal-near">–</b></div>
+          </div>
+          <div class="cal-steps" id="cal-steps">
+            <span class="muted">Step</span>
+            <button data-step="0.1">0.1°</button><button data-step="0.5">0.5°</button><button data-step="1" class="on">1°</button>
+            <button data-step="5">5°</button><button data-step="10">10°</button><button data-step="30">30°</button>
+          </div>
+          <div class="cal-jog">
+            <button class="jog" id="cal-left" aria-label="Rotate left (minus)">
+              <svg viewBox="0 0 24 24" width="40" height="40"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span id="cal-left-lbl">−1°</span>
+            </button>
+            <button class="jog" id="cal-right" aria-label="Rotate right (plus)">
+              <span id="cal-right-lbl">+1°</span>
+              <svg viewBox="0 0 24 24" width="40" height="40"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+          <p class="hint">Hold an arrow to keep jogging. Each press moves exactly one step.</p>
+          <div class="inline">
+            <input type="number" id="cal-goto" step="0.1" min="0" max="360" placeholder="Go to angle, e.g. 92.5">
+            <button class="btn-secondary" id="cal-goto-btn">Go</button>
+            <button class="btn-secondary" id="cal-home">Home</button>
+            <button class="btn-secondary" id="cal-read">Read</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Column angles</div>
+          <table class="tbl cal-tbl">
+            <thead><tr><th>Column</th><th>Angle (°)</th><th></th></tr></thead>
+            <tbody id="cal-rows"></tbody>
+          </table>
+          <div class="btn-row mt">
+            <button class="btn-primary" id="cal-save">Save calibration</button>
+            <button class="btn-secondary" id="cal-even">Even 30° spacing</button>
+            <span class="muted" id="cal-dirty"></span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- test -->
