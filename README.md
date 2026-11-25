@@ -83,20 +83,19 @@ To use the old NEMA34_TEST v04 with its fixed C1–C12, set **Admin → Connecti
 
 ## Machine flow
 
-**Idle spin.** After homing, the carousel keeps turning one column after another (C1 → C2 → … → C12 → C1). The firmware has no continuous-spin command, so this is how it spins.
-* **Order now:** stops the spin. The current move finishes first, so the carousel always stops on a column, the nearest one.
-* **Back to the dashboard:** spinning starts again.
-* **Admin:** spinning stops while Admin is open, so test commands don't collide with it.
-* **Settings:** turn it off, or change the order and the pause on each column, in Admin → Connection → Rotary.
-* **Crossing HOME:** a move that passes HOME is cut short there by the firmware's Hall-sensor stop. The spin carries on; a checkout move is sent once more from HOME.
+**Idle spin.** After homing, the carousel spins clockwise (firmware `SPIN`; with v04 it indexes C1 → C2 → … → C12). It always spins while the home page is showing; there is no switch to turn it off.
+* **Order now:** stops the spin at the nearest column.
+* **Admin:** spinning pauses while Admin is open, so calibration and test commands don't collide with it. Stopping it there (Calibration, Test, STOP) only lasts while Admin is open: back on the home page it spins again. The server also restarts it by itself within 3 s if it is ever left stopped.
+* **Crossing HOME (v04):** a move that passes HOME is cut short there by the firmware's Hall-sensor stop. The spin carries on; a checkout move is sent once more from HOME.
 
 1. **On COM port connect: home.**
    * Opening the port resets the Mega, so the app first waits for `System Ready.`.
    * It then sends the home command (`HOME`) and waits for `HOME COMPLETE`.
    * The dashboard shows *Homing…* and **Order now** stays disabled until the machine is *Ready*.
    * Homing also runs when the server starts with the saved ports, and from **Admin → Connection → Home now**.
-2. **Dispense (checkout): bring the column to the door.**
-   * The app sends `C<column>` and waits for `Command Complete.`, which the firmware prints only after the stepper has stopped.
+2. **Dispense (checkout): home, then bring the column to the door.**
+   * The spin ramps down, then the app sends `HOME` and waits for `HOME COMPLETE`, so every dispense starts from a fresh zero. Switch this off in Admin → Connection → **Home before each dispense**. With several columns in the cart it homes once, before the first.
+   * It then sends `GOTO <angle>` (v04: `C<column>`) and waits for `Command Complete.`, which the firmware prints only after the stepper has stopped.
    * It then waits the settle time, 800 ms by default.
    * On screen, the Rotary XL animation turns the same column to the door.
 3. **Pop the door.**

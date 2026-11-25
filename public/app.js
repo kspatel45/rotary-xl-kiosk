@@ -157,8 +157,8 @@ const ORDERABLE = ['ready', 'spinning', 'stopping'];
 function machineReady() { return ORDERABLE.includes(state.status?.rotary?.state); }
 
 // idle spin of the real carousel (server side); off = stop at the nearest column
-function setSpin(on) {
-  if (setSpin.last === on) return;
+function setSpin(on, force) {
+  if (setSpin.last === on && !force) return;
   setSpin.last = on;
   api('/api/rotary/spin', 'POST', { on }).catch(() => { setSpin.last = undefined; });
 }
@@ -167,7 +167,7 @@ function setSpin(on) {
 function syncDashRotary() {
   if (document.body.dataset.view !== 'dashboard') return;
   const r = state.status?.rotary || {};
-  const turning = !['ready', 'error'].includes(r.state || 'offline');
+  const turning = true;                  // the home page always shows the carousel turning
   const want = turning ? 'spin' : 'at' + (r.column || 1);
   if (dashRotary.mode === want) return;
   dashRotary.mode = want;
@@ -186,6 +186,8 @@ function renderMachine() {
   b.disabled = !ok;
   b.firstChild.textContent = ok ? 'Order now ' : (st === 'homing' || st === 'connecting') ? 'Please wait ' : 'Unavailable ';
   syncDashRotary();
+  if (document.body.dataset.view === 'dashboard' && !vending && st === 'ready' && !r.spinWanted
+      && Date.now() - (renderMachine.kick || 0) > 3000) { renderMachine.kick = Date.now(); setSpin(true, true); }
   const tag = $('#rotary-state');
   if (tag) { tag.className = 'state-tag ' + st; tag.textContent = st === 'error' ? 'Error: ' + (r.message || '') : st; }
 }
@@ -359,10 +361,17 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function send(role, text) { return api(`/api/serial/${role}/write`, 'POST', { text }); }
 
-async function rotateTo(col) {
-  await api('/api/rotary/goto', 'POST', { column: col });   // stops the idle spin first, re-sends once if it stopped at HOME
+async function rotateTo(col, home) {
+  await api('/api/rotary/goto', 'POST', { column: col, home: !!home });   // stops the idle spin first, re-sends once if it stopped at HOME
   // "Command Complete." is printed after the stepper reached its target; give the carousel a moment to settle
   await sleep(state.settings.rotary.settleMs ?? 800);
+}
+
+// wait until the rotary state passes a test (SSE keeps state.status up to date)
+async function waitMachine(test, ms) {
+  const end = Date.now() + ms;
+  await sleep(300);
+  while (Date.now() < end && !test(state.status?.rotary?.state)) await sleep(200);
 }
 
 async function openLatch(n, pos) {
@@ -406,6 +415,8 @@ async function checkout() {
 
   // step list
   const steps = [];
+  const homeFirst = state.settings.rotary.homeBeforeDispense !== false;
+  if (homeFirst) steps.push({ kind: 'home', label: 'Homing the carousel' });
   for (const [col, list] of byCol) {
     steps.push({ kind: 'rotate', col, label: `Rotating to column ${col}` });
     steps[steps.length - 1].label = `Turning column ${col} to the door`;
@@ -426,14 +437,28 @@ async function checkout() {
   let error = null;
   try {
     let i = 0;
+    let home = homeFirst;
     for (const [col, list] of byCol) {
       // 1. dispense command: turn the column to the door and wait until the carousel has stopped
       setStatus('', '<span class="spinner"></span>');
       setText('Getting your order…', `Bringing column ${col} to the door`);
       door.classList.remove('open'); door.firstElementChild.textContent = 'DOOR';
       vendRotary.highlight(col, list[0].slot);
-      mark(i, 'active');
-      await Promise.all([rotateTo(col), vendRotary.goTo(col)]);
+      if (home) {                                                // 0. home first, then the column (one request)
+        setText('Getting your order…', 'Homing the carousel');
+        mark(i, 'active');
+        const move = rotateTo(col, true);
+        await vendRotary.goTo(1);
+        await waitMachine(s => s !== 'homing', 120000);
+        mark(i, 'ok', 'home'); i++;
+        setText('Getting your order…', `Bringing column ${col} to the door`);
+        mark(i, 'active');
+        await Promise.all([move, vendRotary.goTo(col)]);
+        home = false;
+      } else {
+        mark(i, 'active');
+        await Promise.all([rotateTo(col), vendRotary.goTo(col)]);
+      }
       mark(i, 'ok', 'stopped'); i++;
 
       // 2. carousel stopped at the door: pop the door open on the product's Alfie
@@ -751,7 +776,7 @@ function renderConnection() {
   $('#rotary-settle').value = s.rotary.settleMs ?? 800;
   $('#rotary-home-cmd').value = s.rotary.homeCommand || 'HOME';
   $('#rotary-home-on-connect').checked = s.rotary.homeOnConnect !== false;
-  $('#rotary-auto-spin').checked = s.rotary.autoSpin !== false;
+  $('#rotary-home-dispense').checked = s.rotary.homeBeforeDispense !== false;
   $('#rotary-spin-seq').value = s.rotary.spinSequence || '';
   $('#rotary-spin-pause').value = s.rotary.spinPauseMs || 0;
   $('#rotary-firmware').value = s.rotary.firmware || 'v05';
@@ -781,7 +806,7 @@ function collectConnection() {
     soldOutAfterVend: $('#set-soldout').checked,
     newAdminPassword: $('#set-password').value.trim() || undefined,
     rotary: { port: $('#rotary-port').value, baud: +$('#rotary-baud').value, lineEnding: $('#rotary-le').value, moveTimeoutSec: +$('#rotary-timeout').value || 90, settleMs: Math.max(0, +$('#rotary-settle').value || 0), homeCommand: $('#rotary-home-cmd').value.trim() || 'HOME', homeOnConnect: $('#rotary-home-on-connect').checked,
-      autoSpin: $('#rotary-auto-spin').checked, spinSequence: $('#rotary-spin-seq').value.trim(), spinPauseMs: Math.max(0, +$('#rotary-spin-pause').value || 0),
+      homeBeforeDispense: $('#rotary-home-dispense').checked, spinSequence: $('#rotary-spin-seq').value.trim(), spinPauseMs: Math.max(0, +$('#rotary-spin-pause').value || 0),
       firmware: $('#rotary-firmware').value },
     alfie: {
       port: $('#alfie-port').value, baud: +$('#alfie-baud').value, lineEnding: $('#alfie-le').value,

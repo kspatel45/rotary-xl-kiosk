@@ -57,7 +57,7 @@ const DEFAULT_STORE = {
       homeOnConnect: true,        // send the home command every time the port connects
       homeCommand: 'HOME',        // NEMA34_TEST: HOME (or C1) runs homeMotor()
       bootWaitSec: 60,            // the Mega resets when the port opens and homes in setup(): wait for "System Ready."
-      autoSpin: true,             // keep the carousel turning while the kiosk is idle
+      homeBeforeDispense: true,   // checkout: HOME first (re-zero), then turn to the product's column
       firmware: 'v05',            // 'v05' = RotaryXL v05/v06 (GOTO <deg>, angles from Admin > Calibration) | 'legacy' = NEMA34_TEST v04 (C1-C12)
       columnAngles: [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330],   // degrees of C1..C12 at the door (Calibration page)
       spinRPM: 2,                 // free-run (idle spin) speed, rpm
@@ -210,6 +210,19 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // 1. opening the port resets the Mega; its setup() homes and prints "System Ready." - wait for that
 // 2. send the home command (HOME) and wait for "HOME COMPLETE" / "already at HOME"
 // 3. ready: dispense commands are accepted from now on
+// send the home command and wait for "HOME COMPLETE" (throws on timeout / sensor not found)
+async function sendHome() {
+  const cfg = store.settings.rotary;
+  const result = waitLine('rotary', /HOME COMPLETE|already at HOME|HOME SENSOR NOT FOUND|NOT FOUND|ERROR/i, (cfg.moveTimeoutSec || 90) * 1000);
+  writeLink('rotary', cfg.homeCommand || 'HOME');
+  const line = await result;
+  if (!line) throw new Error('No reply to the home command (timeout)');
+  if (/NOT FOUND|ERROR/i.test(line)) throw new Error('Home sensor not found');
+  await waitLine('rotary', /Command Complete/i, 3000);                      // let the firmware finish its reply
+  rotaryState.column = 1;                                                   // home = column 1
+  rotaryState.angle = 0; rotaryState.encAngle = 0;
+}
+
 async function homeRotary(reason) {
   if (rotaryState.homing) return;
   const cfg = store.settings.rotary;
@@ -226,13 +239,7 @@ async function homeRotary(reason) {
     }
     if (!sim && !links.rotary.proc) throw new Error('Rotary port is not open');
     setRotary('homing', 'Homing the carousel…');
-    const result = waitLine('rotary', /HOME COMPLETE|already at HOME|HOME SENSOR NOT FOUND|NOT FOUND|ERROR/i, (cfg.moveTimeoutSec || 90) * 1000);
-    writeLink('rotary', cfg.homeCommand || 'HOME');
-    const line = await result;
-    if (!line) throw new Error('No reply to the home command (timeout)');
-    if (/NOT FOUND|ERROR/i.test(line)) throw new Error('Home sensor not found');
-    await waitLine('rotary', /Command Complete/i, 3000);                    // let the firmware finish its reply
-    rotaryState.column = 1;                                                 // home = column 1
+    await sendHome();
     setRotary('ready', 'Ready');
     if (isV05()) { const want = spin.want; spin.want = false; await applyMotion('after homing'); spin.want = want; }
     if (spin.want) spinLoop();                                              // idle spin starts as soon as it is homed
@@ -321,7 +328,7 @@ function spinSequence() {
 // Idle spin: keep indexing column after column until a stop is requested.
 // A stop lets the current move finish, so the carousel always ends exactly on a column ("nearest location").
 async function spinLoop() {
-  if (spin.running || !spinState() || store.settings.rotary.autoSpin === false) return;
+  if (spin.running || stopping || rotaryState.homing || !spinState()) return;
   spin.running = true;
   if (isV05()) {                                   // the firmware turns continuously by itself
     const r = await rotaryJob(() => runColumn('SPIN ' + (+store.settings.rotary.spinRPM || 2))).catch(e => ({ ok: false, error: e.message }));
@@ -348,6 +355,7 @@ async function spinLoop() {
     spin.running = false;
     if (rotaryState.state === 'spinning' || rotaryState.state === 'stopping') setRotary('ready', `Stopped at column ${rotaryState.column || 1}`);
     spin.idle.splice(0).forEach(fn => fn());
+    if (spin.want && rotaryState.state === 'ready') setTimeout(spinLoop, 50);
   }
 }
 function startSpin() { spin.want = true; spinLoop(); }
@@ -363,6 +371,7 @@ function stopV05() {
     if (!r.ok) { setRotary('error', 'Stop failed: ' + r.error); return; }
     rotaryState.column = rotaryState.angle == null ? rotaryState.column : nearestColumn(rotaryState.angle);
     setRotary('ready', `Stopped at column ${rotaryState.column}`);
+    if (spin.want) spinLoop();
   });
   return stopping;
 }
@@ -378,10 +387,21 @@ function stopSpin() {
 
 // Checkout: stop the idle spin, then bring `col` to the door. A move that crosses HOME is stopped there by the
 // firmware, so it is sent once more from HOME.
-async function gotoColumn(col) {
-  if (isV05() && spin.running && !stopping) { spin.want = false; spin.running = false; }   // firmware re-targets the spin
+async function gotoColumn(col, home) {
+  if (home) await stopSpin();                                              // ramp down before homing
+  else if (isV05() && spin.running && !stopping) { spin.want = false; spin.running = false; }   // firmware re-targets the spin
   else await stopSpin();
   if (!spinState()) throw new Error('Rotary is not ready (' + rotaryState.message + ')');
+  if (home) {
+    await rotaryJob(async () => {
+      rotaryState.homing = true;
+      setRotary('homing', 'Homing before dispense…');
+      try { await sendHome(); }
+      catch (e) { setRotary('error', e.message); throw new Error('Rotary: ' + e.message); }
+      finally { rotaryState.homing = false; }
+      setRotary('ready', 'At HOME');
+    });
+  }
   for (let attempt = 1; attempt <= 2; attempt++) {
     const r = await rotaryJob(() => moveColumn(col));
     if (r.ok) { if (rotaryState.state !== 'ready') setRotary('ready', `At column ${col}`); else sse('status', linkStatus()); return; }
@@ -600,7 +620,7 @@ const server = http.createServer(async (req, res) => {
       saveStore();
       if (!wasSim && store.settings.simulation) { closeLink('rotary', 'simulation on'); closeLink('alfie', 'simulation on'); homeRotary('connect'); }
       if (wasSim && !store.settings.simulation) { rotaryState.state = 'offline'; rotaryState.message = 'Not connected'; }
-      if (store.settings.rotary.autoSpin === false) stopSpin(); else if (spin.want) spinLoop();
+      if (spin.want) spinLoop();
       if (JSON.stringify(MOTION_KEYS.map(k => store.settings.rotary[k])) !== motionBefore) applyMotion('settings saved');
       sse('status', linkStatus());
       sse('state', publicState());
@@ -644,7 +664,7 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       const col = parseInt(b.column, 10);
       if (!(col >= 1 && col <= 12)) return send(res, 400, { error: 'column must be 1-12' });
-      try { await gotoColumn(col); return send(res, 200, { ok: true, column: col }); }
+      try { await gotoColumn(col, !!b.home); return send(res, 200, { ok: true, column: col }); }
       catch (e) { return send(res, 409, { error: e.message }); }
     }
 
@@ -714,6 +734,8 @@ async function autoOpen() {
 
 process.on('exit', () => { closeLink('rotary'); closeLink('alfie'); });
 process.on('SIGINT', () => process.exit(0));
+
+setInterval(() => { if (spin.want && rotaryState.state === 'ready' && !spin.running && !stopping && !rotaryState.homing) spinLoop(); }, 3000);
 
 server.listen(PORT, () => {
   console.log(`Rotary Kiosk running at http://localhost:${PORT}`);

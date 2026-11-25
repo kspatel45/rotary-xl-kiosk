@@ -177,7 +177,7 @@
             <label class="switch-row tight"><input type="checkbox" id="rotary-home-on-connect"><span class="switch"></span><span>Home on connect</span></label>
           </div>
           <div class="two">
-            <label class="switch-row tight"><input type="checkbox" id="rotary-auto-spin"><span class="switch"></span><span>Auto-spin when idle</span></label>
+            <label class="switch-row tight"><input type="checkbox" id="rotary-home-dispense"><span class="switch"></span><span>Home before each dispense</span></label>
             <label>Pause on each column (ms) <input type="number" id="rotary-spin-pause" min="0" max="10000" step="100"></label>
           </div>
           <div class="two">
@@ -190,7 +190,7 @@
             <p class="hint" style="align-self:end">Speeds, ramps and direction: Admin → Calibration → Motion.</p>
           </div>
           <label>Spin order (v04 only) <input id="rotary-spin-seq" placeholder="C1,C2,C3,C4,C5,C6,C7,C8,C9,C10,C11,C12"></label>
-          <p class="hint">Auto-spin: after homing, the carousel keeps turning column after column. <b>Order now</b> stops it once the current move finishes, so it always stops on a column. Checkout then turns to the product's column.</p>
+          <p class="hint">The carousel always spins while the dashboard is showing. Stopping it in Admin (Calibration, Test) only lasts while Admin is open. <b>Order now</b> stops it at the nearest column. At checkout it homes first (if switched on), then turns clockwise to the product's column and opens the door.</p>
           <p class="hint">Firmware default: 9600 baud, Newline (LF). On connect the app waits for the Mega to start, sends the home command and waits for "HOME COMPLETE". Customers can only order after that.</p>
           <div class="btn-row"><button class="btn-primary" data-open="rotary">Connect</button><button class="btn-secondary" id="btn-home-now">Home now</button><button class="btn-secondary" data-close="rotary">Disconnect</button></div>
         </div>
