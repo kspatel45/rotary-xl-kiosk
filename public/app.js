@@ -39,9 +39,12 @@ function show(name) {
   document.body.dataset.view = name;
   if (name === 'dashboard') {
     dashRotary.build(state.products);
-    requestAnimationFrame(() => { dashRotary.layout(); dashRotary.autoStep(); });
+    dashRotary.mode = '';
+    requestAnimationFrame(() => { dashRotary.layout(); syncDashRotary(); });
     $('#stat-products').textContent = available().length;
-  } else dashRotary.stop();
+    setSpin(true);                       // idle: the real carousel keeps spinning
+  } else { dashRotary.stop(); dashRotary.mode = ''; }
+  if (name === 'admin') setSpin(false);  // admin tests need the motor
   if (name !== 'vend') vendRotary.stop();
   if (name === 'catalog') { $('#search').value = ''; catFilter = ''; renderChips(); renderCatalog(); renderCart(); }
   if (name === 'admin') renderAdmin();
@@ -134,11 +137,12 @@ class Rotary {
     const d = ((want - this.angle) % 360 + 540) % 360 - 180;
     return this.turnTo(this.angle + d, Math.max(900, Math.abs(d) / STEP * 450));
   }
-  // dashboard idle: index one column, pause, repeat - like the real machine
-  autoStep() {
+  // dashboard idle: turn continuously (degrees per second), like the carousel spinning
+  spinForever(speed = 16) {
     this.stop();
-    const go = async () => { await this.turnTo(Math.round(this.angle / STEP) * STEP + STEP, 1300); this.timer = setTimeout(go, 1600); };
-    this.timer = setTimeout(go, 800);
+    let last = performance.now();
+    const tick = now => { this.angle += speed * Math.min(100, now - last) / 1000; last = now; this.render(); this.anim = requestAnimationFrame(tick); };
+    this.anim = requestAnimationFrame(tick);
   }
   stop() { clearTimeout(this.timer); this.timer = null; cancelAnimationFrame(this.anim); }
   highlight(col, slot) {
@@ -149,18 +153,39 @@ class Rotary {
 let dashRotary, vendRotary;
 
 // ================================================================ machine status (homing / ready)
-function machineReady() { return state.status?.rotary?.state === 'ready'; }
+const ORDERABLE = ['ready', 'spinning', 'stopping'];
+function machineReady() { return ORDERABLE.includes(state.status?.rotary?.state); }
+
+// idle spin of the real carousel (server side); off = stop at the nearest column
+function setSpin(on) {
+  if (setSpin.last === on) return;
+  setSpin.last = on;
+  api('/api/rotary/spin', 'POST', { on }).catch(() => { setSpin.last = undefined; });
+}
+
+// dashboard picture follows the machine: spinning (or not connected yet) = turning, stopped = standing at its column
+function syncDashRotary() {
+  if (document.body.dataset.view !== 'dashboard') return;
+  const r = state.status?.rotary || {};
+  const turning = !['ready', 'error'].includes(r.state || 'offline');
+  const want = turning ? 'spin' : 'at' + (r.column || 1);
+  if (dashRotary.mode === want) return;
+  dashRotary.mode = want;
+  if (turning) dashRotary.spinForever(); else dashRotary.goTo(r.column || 1);
+}
 function renderMachine() {
   const r = state.status?.rotary || {};
   const st = r.state || 'offline';
   const pill = $('#machine-pill');
-  pill.className = 'machine-pill ' + (st === 'ready' ? 'ready' : st === 'error' ? 'error' : st === 'offline' ? '' : 'busy');
+  const ok = ORDERABLE.includes(st);
+  pill.className = 'machine-pill ' + (ok ? 'ready' : st === 'error' ? 'error' : st === 'offline' ? '' : 'busy');
   pill.title = r.message || '';
-  $('#machine-text').textContent = st === 'ready' ? (state.status.simulation ? 'Ready · demo mode' : 'Ready')
+  $('#machine-text').textContent = ok ? (state.status.simulation ? 'Ready · demo mode' : 'Ready')
     : st === 'homing' ? 'Homing…' : st === 'connecting' ? 'Starting…' : st === 'error' ? 'Out of service' : 'Offline';
   const b = $('#btn-order');
-  b.disabled = st !== 'ready';
-  b.firstChild.textContent = st === 'ready' ? 'Order now ' : (st === 'homing' || st === 'connecting') ? 'Please wait ' : 'Unavailable ';
+  b.disabled = !ok;
+  b.firstChild.textContent = ok ? 'Order now ' : (st === 'homing' || st === 'connecting') ? 'Please wait ' : 'Unavailable ';
+  syncDashRotary();
   const tag = $('#rotary-state');
   if (tag) { tag.className = 'state-tag ' + st; tag.textContent = st === 'error' ? 'Error: ' + (r.message || '') : st; }
 }
@@ -335,11 +360,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function send(role, text) { return api(`/api/serial/${role}/write`, 'POST', { text }); }
 
 async function rotateTo(col) {
-  const done = waitFor('rotary', l => /Command Complete|aborted|stopped by|ERROR|Invalid/i.test(l), (state.settings.rotary.moveTimeoutSec || 90) * 1000);
-  await send('rotary', 'C' + col);
-  const line = await done;
-  if (!line) throw new Error(`Rotary did not finish moving to column ${col} (timeout)`);
-  if (!/Command Complete/i.test(line)) throw new Error('Rotary: ' + line);
+  await api('/api/rotary/goto', 'POST', { column: col });   // stops the idle spin first, re-sends once if it stopped at HOME
   // "Command Complete." is printed after the stepper reached its target; give the carousel a moment to settle
   await sleep(state.settings.rotary.settleMs ?? 800);
 }
@@ -370,7 +391,8 @@ async function checkout() {
   $('#cart').classList.remove('open');
   show('vend');
   vendRotary.build(state.products);
-  vendRotary.angle = dashRotary.angle;   // continue from where the dashboard carousel stopped
+  setSpin.last = false;                  // the server stops the idle spin itself before the first move
+  vendRotary.angle = ((state.status?.rotary?.column || 1) - 1) * STEP;   // start where the real carousel stands
   requestAnimationFrame(() => vendRotary.layout());
   const door = $('#door-frame');
   door.classList.remove('open'); door.firstElementChild.textContent = 'DOOR';
@@ -497,13 +519,18 @@ function dupLocations() {
   return dup;
 }
 
-function renderProductRows() {
-  const dup = dupLocations();
-  $('#product-rows').innerHTML = state.products.length ? state.products.map(p => {
-    const k = locKey(p);
-    return `<tr>
+let prodView = (() => { try { return localStorage.getItem('prodView') || 'category'; } catch { return 'category'; } })();
+function setProdView(v) {
+  prodView = v;
+  try { localStorage.setItem('prodView', v); } catch { }
+  renderProductRows();
+}
+
+function productRow(p, dup) {
+  const k = locKey(p);
+  return `<tr>
       <td>${thumbHTML(p)}</td>
-      <td><div class="p-name">${esc(p.name)}</div></td>
+      <td><div class="p-name">${esc(p.name)}</div>${prodView === 'column' && p.category ? `<small class="muted">${esc(p.category)}</small>` : ''}</td>
       <td>${money(p.price)}</td>
       <td><span class="tag loc">C${p.column}</span></td>
       <td><span class="tag loc">Shelf ${p.slot || 1}</span></td>
@@ -514,19 +541,61 @@ function renderProductRows() {
         <button class="btn-secondary" data-stock="${esc(p.id)}">${p.available ? 'Mark sold out' : 'Restock'}</button>
         <button class="btn-primary" data-edit="${esc(p.id)}">Edit</button>
       </td></tr>`;
-  }).join('') : `<tr><td colspan="9" class="muted" style="padding:30px;text-align:center">No products yet. Press <b>+ Add product</b>.</td></tr>`;
+}
+
+function renderProductRows() {
+  $$('#prod-view button').forEach(b => b.classList.toggle('on', b.dataset.view === prodView));
+  const dup = dupLocations();
+  const out = [];
+  if (!state.products.length) {
+    out.push(`<tr><td colspan="9" class="muted" style="padding:30px;text-align:center">No products yet. Press <b>+ Add product</b>.</td></tr>`);
+  } else if (prodView === 'column') {
+    // every column C1-C12 with its 10 shelves, empty shelves included (tap "+ Add" to fill one)
+    for (let c = 1; c <= 12; c++) {
+      const list = state.products.filter(p => +p.column === c).sort((a, b) => (a.slot || 1) - (b.slot || 1));
+      const inStock = list.filter(p => p.available).length;
+      out.push(`<tr class="grp"><td colspan="9"><b>Column ${c}</b><span>${list.length}/10 shelves filled · ${inStock} in stock${list[0] ? ' · ' + esc(alfieName(list[0].alfie || 1)) : ''}</span></td></tr>`);
+      for (let sl = 1; sl <= 10; sl++) {
+        const here = list.filter(p => (+p.slot || 1) === sl);
+        if (here.length) here.forEach(p => out.push(productRow(p, dup)));
+        else out.push(`<tr class="empty-row"><td></td><td colspan="3" class="muted">Shelf ${sl} is empty</td><td><span class="tag loc">Shelf ${sl}</span></td><td colspan="3"></td><td class="actions"><button class="btn-secondary" data-add-at="${c}-${sl}">+ Add here</button></td></tr>`);
+      }
+    }
+  } else {
+    // grouped by category, in the order the categories first appear; inside a group by column and shelf
+    const groups = new Map();
+    for (const p of state.products) {
+      const k = p.category || 'Other';
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(p);
+    }
+    for (const [cat, list] of groups) {
+      list.sort((a, b) => a.column - b.column || (a.slot || 1) - (b.slot || 1));
+      const cols = [...new Set(list.map(p => 'C' + p.column))].join(', ');
+      out.push(`<tr class="grp"><td colspan="9"><b>${esc(cat)}</b><span>${list.length} products · ${cols}</span></td></tr>`);
+      list.forEach(p => out.push(productRow(p, dup)));
+    }
+  }
+  $('#product-rows').innerHTML = out.join('');
 }
 
 // ---------- product editor
 let editingId = null;
-function openEditor(id) {
+function openEditor(id, preset = {}) {
   editingId = id;
-  const p = state.products.find(x => x.id === id) || { name: '', image: '', price: '', column: 1, alfie: 1, compartment: 1, slot: freeSlot(1), available: true };
+  const col0 = preset.column || 1;
+  const p = state.products.find(x => x.id === id) || {
+    name: '', image: '', price: '', column: col0, slot: preset.slot || freeSlot(col0), alfie: ((col0 - 1) % 3) + 1,
+    compartment: preset.slot || freeSlot(col0), available: true,
+    category: state.products.find(x => +x.column === col0)?.category || ''
+  };
   const f = $('#product-form');
   $('#editor-title').textContent = id ? 'Edit product' : 'New product';
   f.name.value = p.name; f.image.value = p.image; f.price.value = p.price;
   f.column.innerHTML = colOpts(p.column); f.slot.innerHTML = slotOpts(p.slot || 1); f.alfie.innerHTML = alfieOpts(p.alfie || 1); f.compartment.innerHTML = compOpts(p.compartment);
   f.available.checked = p.available !== false;
+  f.category.value = p.category || '';
+  $('#category-list').innerHTML = [...new Set(state.products.map(x => x.category).filter(Boolean))].map(c => `<option value="${esc(c)}">`).join('');
   $('#btn-delete-product').classList.toggle('hidden', !id);
   updateEditorPreview();
   $('#product-modal').classList.add('open');
@@ -549,7 +618,7 @@ async function saveProduct(e) {
   const item = {
     id: editingId || ('p' + Date.now().toString(36)),
     name: f.name.value.trim(), image: f.image.value.trim(), price: parseFloat(f.price.value) || 0,
-    column: +f.column.value, slot: +f.slot.value, alfie: +f.alfie.value, compartment: +f.compartment.value, available: f.available.checked
+    category: f.category.value.trim(), column: +f.column.value, slot: +f.slot.value, alfie: +f.alfie.value, compartment: +f.compartment.value, available: f.available.checked
   };
   if (!item.name) return toast('Enter a product name', true);
   const products = editingId ? state.products.map(p => p.id === editingId ? item : p) : [...state.products, item];
@@ -606,6 +675,9 @@ function renderConnection() {
   $('#rotary-settle').value = s.rotary.settleMs ?? 800;
   $('#rotary-home-cmd').value = s.rotary.homeCommand || 'HOME';
   $('#rotary-home-on-connect').checked = s.rotary.homeOnConnect !== false;
+  $('#rotary-auto-spin').checked = s.rotary.autoSpin !== false;
+  $('#rotary-spin-seq').value = s.rotary.spinSequence || '';
+  $('#rotary-spin-pause').value = s.rotary.spinPauseMs || 0;
   const tpl = s.alfie.frameTemplate;
   const preset = $('#alfie-preset');
   preset.value = [...preset.options].some(o => o.value === tpl) ? tpl : 'custom';
@@ -630,7 +702,8 @@ function collectConnection() {
     idleSeconds: +$('#set-idle').value || 90,
     soldOutAfterVend: $('#set-soldout').checked,
     newAdminPassword: $('#set-password').value.trim() || undefined,
-    rotary: { port: $('#rotary-port').value, baud: +$('#rotary-baud').value, lineEnding: $('#rotary-le').value, moveTimeoutSec: +$('#rotary-timeout').value || 90, settleMs: Math.max(0, +$('#rotary-settle').value || 0), homeCommand: $('#rotary-home-cmd').value.trim() || 'HOME', homeOnConnect: $('#rotary-home-on-connect').checked },
+    rotary: { port: $('#rotary-port').value, baud: +$('#rotary-baud').value, lineEnding: $('#rotary-le').value, moveTimeoutSec: +$('#rotary-timeout').value || 90, settleMs: Math.max(0, +$('#rotary-settle').value || 0), homeCommand: $('#rotary-home-cmd').value.trim() || 'HOME', homeOnConnect: $('#rotary-home-on-connect').checked,
+      autoSpin: $('#rotary-auto-spin').checked, spinSequence: $('#rotary-spin-seq').value.trim(), spinPauseMs: Math.max(0, +$('#rotary-spin-pause').value || 0) },
     alfie: {
       port: $('#alfie-port').value, baud: +$('#alfie-baud').value, lineEnding: $('#alfie-le').value,
       frameTemplate: $('#alfie-template').value.trim() || 't{ID}{DLC}{DATA}', initCommands: $('#alfie-init').value,
@@ -701,7 +774,7 @@ async function safeSend(role, text) { try { await send(role, text); } catch (e) 
 // ================================================================ wire up
 function wire() {
   // dashboard
-  $('#btn-order').addEventListener('click', () => { cart.clear(); show('catalog'); });
+  $('#btn-order').addEventListener('click', () => { setSpin(false); cart.clear(); show('catalog'); });
   $('#btn-gear').addEventListener('click', openNumpad);
 
   // catalog
@@ -733,7 +806,10 @@ function wire() {
     $$('.tab-pane').forEach(p => p.classList.toggle('active', p.dataset.pane === b.dataset.tab));
   });
   $('#btn-add-product').addEventListener('click', () => openEditor(null));
+  $('#prod-view').addEventListener('click', e => { const b = e.target.closest('[data-view]'); if (b) setProdView(b.dataset.view); });
   $('#product-rows').addEventListener('click', e => {
+    const add = e.target.closest('[data-add-at]');
+    if (add) { const [c, sl] = add.dataset.addAt.split('-').map(Number); return openEditor(null, { column: c, slot: sl }); }
     const ed = e.target.closest('[data-edit]'); if (ed) return openEditor(ed.dataset.edit);
     const st = e.target.closest('[data-stock]'); if (st) return toggleStock(st.dataset.stock);
   });

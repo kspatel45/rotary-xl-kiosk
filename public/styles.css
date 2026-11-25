@@ -423,3 +423,13 @@ h1, h2, h3, h4 { font-family: var(--head); letter-spacing: .2px; }
   .cat-chips { flex-wrap: wrap; overflow: visible; padding: 18px 40px; gap: 10px; }
   .cat-chips button { font-size: 19px; padding: 12px 22px; }
 }
+
+/* admin products: group toggle + group header rows */
+.pane-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.seg { display: inline-flex; background: var(--grey-2); border-radius: 10px; padding: 4px; }
+.seg button { padding: 9px 16px; border-radius: 7px; font-weight: 700; color: var(--muted); }
+.seg button.on { background: #fff; color: var(--slate); box-shadow: 0 1px 4px rgba(36, 48, 55, .18); }
+.tbl tr.grp td { background: #f0f4f5; border-top: 2px solid var(--grey); padding: 10px 14px; }
+.tbl tr.grp b { font-family: var(--head); font-size: 20px; text-transform: uppercase; letter-spacing: .5px; margin-right: 12px; }
+.tbl tr.grp span { color: var(--muted); font-size: 13px; font-weight: 600; }
+.tbl tr.empty-row td { background: repeating-linear-gradient(135deg, #fff, #fff 8px, #fafbfb 8px, #fafbfb 16px); }

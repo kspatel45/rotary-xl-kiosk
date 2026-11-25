@@ -56,7 +56,10 @@ const DEFAULT_STORE = {
       settleMs: 800,              // pause after the carousel stops, before a door opens
       homeOnConnect: true,        // send the home command every time the port connects
       homeCommand: 'HOME',        // NEMA34_TEST: HOME (or C1) runs homeMotor()
-      bootWaitSec: 60             // the Mega resets when the port opens and homes in setup(): wait for "System Ready."
+      bootWaitSec: 60,            // the Mega resets when the port opens and homes in setup(): wait for "System Ready."
+      autoSpin: true,             // keep the carousel turning (column after column) while the kiosk is idle
+      spinSequence: '',           // order of the idle spin; empty = C1,C2,...,C12
+      spinPauseMs: 0              // pause on each column during the idle spin
     },
     alfie: {
       port: '', baud: 115200, lineEnding: 'CR',
@@ -159,7 +162,8 @@ const links = {
 };
 
 // rotary machine state: offline -> connecting -> homing -> ready | error
-const rotaryState = { state: 'offline', message: 'Not connected', homing: false };
+// (spinning / stopping while idle-spinning; column = last column the carousel stopped at, 1 = HOME)
+const rotaryState = { state: 'offline', message: 'Not connected', homing: false, column: 1 };
 function setRotary(state, message) {
   rotaryState.state = state; rotaryState.message = message;
   emitLine('rotary', `[${state}] ${message}`, 'sys');
@@ -169,7 +173,7 @@ function setRotary(state, message) {
 function linkStatus() {
   return {
     simulation: !!store.settings.simulation,
-    rotary: { open: !!links.rotary.port || !!store.settings.simulation, port: links.rotary.port, state: rotaryState.state, message: rotaryState.message },
+    rotary: { open: !!links.rotary.port || !!store.settings.simulation, port: links.rotary.port, state: rotaryState.state, message: rotaryState.message, column: rotaryState.column, spinWanted: spin.want },
     alfie: { open: !!links.alfie.port || !!store.settings.simulation, port: links.alfie.port }
   };
 }
@@ -217,12 +221,91 @@ async function homeRotary(reason) {
     if (!line) throw new Error('No reply to the home command (timeout)');
     if (/NOT FOUND|ERROR/i.test(line)) throw new Error('Home sensor not found');
     await waitLine('rotary', /Command Complete/i, 3000);                    // let the firmware finish its reply
+    rotaryState.column = 1;                                                 // home = column 1
     setRotary('ready', 'Ready');
+    if (spin.want) spinLoop();                                              // idle spin starts as soon as it is homed
   } catch (e) {
     setRotary('error', e.message);
   } finally {
     rotaryState.homing = false;
   }
+}
+
+// ------------------------------------------------------------------ rotary moves, idle spin, go-to-column
+// One rotary command at a time (spin steps, checkout moves and admin tests share the motor).
+let rotaryQueue = Promise.resolve();
+function rotaryJob(fn) { const run = rotaryQueue.then(fn, fn); rotaryQueue = run.catch(() => { }); return run; }
+
+// Send one column command and wait until the firmware has finished it.
+// NEMA34_TEST prints "Command Complete." after every command; before that it may print
+// "Invalid Command", "aborted", "ERROR" or "stopped by Hall sensor" (a move that crossed HOME stops there).
+async function runColumn(cmd) {
+  const cfg = store.settings.rotary;
+  const done = waitLine('rotary', /Command Complete|aborted|stopped by|ERROR|Invalid/i, (cfg.moveTimeoutSec || 90) * 1000);
+  writeLink('rotary', cmd);
+  const line = await done;
+  if (!line) return { ok: false, error: `No reply to ${cmd} (timeout)` };
+  if (!/Command Complete/i.test(line)) await waitLine('rotary', /Command Complete/i, 3000);   // swallow the rest of the reply
+  if (/stopped by Hall/i.test(line)) { rotaryState.column = 1; return { ok: false, hall: true, line }; }
+  if (!/Command Complete/i.test(line)) return { ok: false, error: line };
+  const m = cmd.match(/^C(\d+)$/i);
+  if (m) rotaryState.column = +m[1];
+  return { ok: true };
+}
+
+const spinState = () => ['ready', 'spinning', 'stopping'].includes(rotaryState.state);
+const spin = { want: true, running: false, idx: 0, idle: [] };
+function spinSequence() {
+  const seq = String(store.settings.rotary.spinSequence || '').split(/[\s,]+/).map(s => s.trim().toUpperCase()).filter(s => /^C([1-9]|1[0-2])$/.test(s));
+  return seq.length >= 2 ? seq : Array.from({ length: 12 }, (_, i) => 'C' + (i + 1));
+}
+
+// Idle spin: keep indexing column after column until a stop is requested.
+// A stop lets the current move finish, so the carousel always ends exactly on a column ("nearest location").
+async function spinLoop() {
+  if (spin.running || !spinState() || store.settings.rotary.autoSpin === false) return;
+  spin.running = true;
+  const seq = spinSequence();
+  const here = seq.indexOf('C' + (rotaryState.column || 1));
+  spin.idx = here >= 0 ? here + 1 : 0;
+  setRotary('spinning', 'Spinning');
+  try {
+    while (spin.want && spinState()) {
+      const cmd = seq[spin.idx % seq.length];
+      const r = await rotaryJob(() => runColumn(cmd)).catch(e => ({ ok: false, error: e.message }));
+      if (!r.ok && !r.hall) { setRotary('error', 'Spin stopped: ' + r.error); break; }
+      if (r.ok) spin.idx++;                       // after a Hall stop (passed HOME) the same column is tried again from HOME
+      sse('status', linkStatus());
+      const pause = +store.settings.rotary.spinPauseMs || 0;
+      if (spin.want && pause) await sleep(pause);
+    }
+  } finally {
+    spin.running = false;
+    if (rotaryState.state === 'spinning' || rotaryState.state === 'stopping') setRotary('ready', `Stopped at column ${rotaryState.column || 1}`);
+    spin.idle.splice(0).forEach(fn => fn());
+  }
+}
+function startSpin() { spin.want = true; spinLoop(); }
+// resolves once the carousel is standing still on a column
+function stopSpin() {
+  spin.want = false;
+  if (!spin.running) return Promise.resolve();
+  if (rotaryState.state === 'spinning') setRotary('stopping', 'Stopping at the nearest column…');
+  return new Promise(res => spin.idle.push(res));
+}
+
+// Checkout: stop the idle spin, then bring `col` to the door. A move that crosses HOME is stopped there by the
+// firmware, so it is sent once more from HOME.
+async function gotoColumn(col) {
+  await stopSpin();
+  if (!spinState()) throw new Error('Rotary is not ready (' + rotaryState.message + ')');
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const r = await rotaryJob(() => runColumn('C' + col));
+    if (r.ok) { sse('status', linkStatus()); return; }
+    if (!r.hall) throw new Error('Rotary: ' + r.error);
+    emitLine('rotary', `[hall] passed HOME on the way to C${col}, sending it again`, 'sys');
+  }
+  throw new Error(`Rotary could not reach column ${col} (stopped at HOME twice)`);
 }
 
 function handleRx(role, chunk) {
@@ -315,7 +398,7 @@ function simulate(role, text) {
     for (const c of cmds) {
       if (!/^C([1-9]|1[0-2])$/.test(c)) { simSay('rotary', 'Invalid Command: ' + c, t); simSay('rotary', 'Command sequence aborted.', t + 50); break; }
       simSay('rotary', 'Command: ' + c, t);
-      t += 2500;
+      t += 1800;
       simSay('rotary', 'Move Complete', t);
     }
     simSay('rotary', 'Command Complete.', t + 100);
@@ -379,6 +462,7 @@ const server = http.createServer(async (req, res) => {
       saveStore();
       if (!wasSim && store.settings.simulation) { closeLink('rotary', 'simulation on'); closeLink('alfie', 'simulation on'); homeRotary('connect'); }
       if (wasSim && !store.settings.simulation) { rotaryState.state = 'offline'; rotaryState.message = 'Not connected'; }
+      if (store.settings.rotary.autoSpin === false) stopSpin(); else if (spin.want) spinLoop();
       sse('status', linkStatus());
       sse('state', publicState());
       return send(res, 200, publicState());
@@ -394,6 +478,22 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/api/ports' && req.method === 'GET') return send(res, 200, { ports: await listComPorts(), status: linkStatus() });
+
+    // idle spin on/off (dashboard = on; Order now / admin = off, stops at the nearest column)
+    if (p === '/api/rotary/spin' && req.method === 'POST') {
+      const b = await readBody(req);
+      if (b.on) { startSpin(); return send(res, 200, { ok: true, status: linkStatus() }); }
+      await stopSpin();
+      return send(res, 200, { ok: true, column: rotaryState.column, status: linkStatus() });
+    }
+    // checkout: bring a column to the door (stops the spin first)
+    if (p === '/api/rotary/goto' && req.method === 'POST') {
+      const b = await readBody(req);
+      const col = parseInt(b.column, 10);
+      if (!(col >= 1 && col <= 12)) return send(res, 400, { error: 'column must be 1-12' });
+      try { await gotoColumn(col); return send(res, 200, { ok: true, column: col }); }
+      catch (e) { return send(res, 409, { error: e.message }); }
+    }
 
     const sm = p.match(/^\/api\/serial\/(rotary|alfie)\/(open|close|write|home)$/);
     if (sm && req.method === 'POST') {
@@ -415,10 +515,10 @@ const server = http.createServer(async (req, res) => {
           return send(res, 200, { ok: true, status: linkStatus() });
         } catch (e) { return send(res, 500, { error: e.message }); }
       }
-      if (action === 'home') { homeRotary('admin'); return send(res, 200, { ok: true }); }
+      if (action === 'home') { await stopSpin(); homeRotary('admin'); return send(res, 200, { ok: true }); }
       if (action === 'close') { closeLink(role, 'closed by admin'); return send(res, 200, { ok: true, status: linkStatus() }); }
       if (action === 'write') {
-        try { writeLink(role, String(b.text || '')); return send(res, 200, { ok: true }); }
+        try { if (role === 'rotary') await stopSpin(); writeLink(role, String(b.text || '')); return send(res, 200, { ok: true }); }
         catch (e) { return send(res, 409, { error: e.message }); }
       }
     }

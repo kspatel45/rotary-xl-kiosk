@@ -49,6 +49,13 @@ Both systems need Node.js 18 or newer. There is nothing to install with npm.
 
 ## Machine flow
 
+**Idle spin.** After homing, the carousel keeps turning one column after another (C1 → C2 → … → C12 → C1). The firmware has no continuous-spin command, so this is how it spins.
+* **Order now:** stops the spin. The current move finishes first, so the carousel always stops on a column, the nearest one.
+* **Back to the dashboard:** spinning starts again.
+* **Admin:** spinning stops while Admin is open, so test commands don't collide with it.
+* **Settings:** turn it off, or change the order and the pause on each column, in Admin → Connection → Rotary.
+* **Crossing HOME:** a move that passes HOME is cut short there by the firmware's Hall-sensor stop. The spin carries on; a checkout move is sent once more from HOME.
+
 1. **On COM port connect: home.**
    * Opening the port resets the Mega, so the app first waits for `System Ready.`.
    * It then sends the home command (`HOME`) and waits for `HOME COMPLETE`.
@@ -74,7 +81,7 @@ Both systems need Node.js 18 or newer. There is nothing to install with npm.
 * **Catalog**: product cards and a cart. After 90 s with no touch, the kiosk clears the cart and returns to the dashboard.
 * **Vending**: the carousel turns to the column, with a door frame that shows *OPEN* or *CLOSED*, and a step list.
 * **Admin**
-  * **Products**: name, image link, price and location. The location is the rotary column (C1–C12), the shelf (1–10, where it appears on the display), the Alfie door (1–3) and the latch.
+  * **Products**: a **By category / By column** toggle at the top. The column view shows every column with its 10 shelves; empty shelves have a **+ Add here** button. Each product has a name, image link, price, category and location. The location is the rotary column (C1–C12), the shelf (1–10, where it appears on the display), the Alfie door (1–3) and the latch.
   * **Connection**: COM port, baud rate and line ending for the Arduino and the USB-CAN adapter. Also the home command, home on connect, Home now, and the SLCAN init commands. The default init is `C`, `S2`, `O`: close, 50 kbit/s, open, the same as VendingPoC.
   * **Alfie doors**: name, Group ID and DIP address of the 3 Alfies. CAN ID = (group << 9) | (address << 4) | 0xF.
   * **Test & Log**: rotate to a column, open or query a latch, send raw lines, and watch the live serial log.
